@@ -1,0 +1,4 @@
+最高72MHZ
+M3内核
+512K FLASH
+64K   RAM

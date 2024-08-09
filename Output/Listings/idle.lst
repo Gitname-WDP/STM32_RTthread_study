@@ -1,0 +1,5259 @@
+L 1 "..\rtthread\src\idle.c"
+N/*
+N * File      : idle.c
+N * This file is part of RT-Thread RTOS
+N * COPYRIGHT (C) 2006 - 2012, RT-Thread Development Team
+N *
+N *  This program is free software; you can redistribute it and/or modify
+N *  it under the terms of the GNU General Public License as published by
+N *  the Free Software Foundation; either version 2 of the License, or
+N *  (at your option) any later version.
+N *
+N *  This program is distributed in the hope that it will be useful,
+N *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+N *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+N *  GNU General Public License for more details.
+N *
+N *  You should have received a copy of the GNU General Public License along
+N *  with this program; if not, write to the Free Software Foundation, Inc.,
+N *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+N *
+N * Change Logs:
+N * Date           Author       Notes
+N * 2006-03-23     Bernard      the first version
+N * 2010-11-10     Bernard      add cleanup callback function in thread exit.
+N * 2012-12-29     Bernard      fix compiling warning.
+N * 2013-12-21     Grissiom     let rt_thread_idle_excute loop until there is no
+N *                             dead thread.
+N * 2016-08-09     ArdaFu       add method to get the handler of the idle thread.
+N * 2018-02-07     Bernard      lock scheduler to protect tid->cleanup.
+N */
+N
+N#include <rthw.h>
+L 1 "..\rtthread\include\rthw.h" 1
+N/*
+N * File      : rthw.h
+N * This file is part of RT-Thread RTOS
+N * COPYRIGHT (C) 2006 - 2012, RT-Thread Development Team
+N *
+N *  This program is free software; you can redistribute it and/or modify
+N *  it under the terms of the GNU General Public License as published by
+N *  the Free Software Foundation; either version 2 of the License, or
+N *  (at your option) any later version.
+N *
+N *  This program is distributed in the hope that it will be useful,
+N *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+N *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+N *  GNU General Public License for more details.
+N *
+N *  You should have received a copy of the GNU General Public License along
+N *  with this program; if not, write to the Free Software Foundation, Inc.,
+N *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+N *
+N * Change Logs:
+N * Date           Author       Notes
+N * 2006-03-18     Bernard      the first version
+N * 2006-04-25     Bernard      add rt_hw_context_switch_interrupt declaration
+N * 2006-09-24     Bernard      add rt_hw_context_switch_to declaration
+N * 2012-12-29     Bernard      add rt_hw_exception_install declaration
+N * 2017-10-17     Hichard      add some micros
+N */
+N
+N#ifndef __RT_HW_H__
+N#define __RT_HW_H__
+N
+N#include <rtthread.h>
+L 1 "..\rtthread\include\rtthread.h" 1
+N/*
+N * File      : rtthread.h
+N * This file is part of RT-Thread RTOS
+N * COPYRIGHT (C) 2006 - 2012, RT-Thread Development Team
+N *
+N *  This program is free software; you can redistribute it and/or modify
+N *  it under the terms of the GNU General Public License as published by
+N *  the Free Software Foundation; either version 2 of the License, or
+N *  (at your option) any later version.
+N *
+N *  This program is distributed in the hope that it will be useful,
+N *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+N *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+N *  GNU General Public License for more details.
+N *
+N *  You should have received a copy of the GNU General Public License along
+N *  with this program; if not, write to the Free Software Foundation, Inc.,
+N *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+N *
+N * Change Logs:
+N * Date           Author       Notes
+N * 2006-03-18     Bernard      the first version
+N * 2006-04-26     Bernard      add semaphore APIs
+N * 2006-08-10     Bernard      add version information
+N * 2007-01-28     Bernard      rename RT_OBJECT_Class_Static to RT_Object_Class_Static
+N * 2007-03-03     Bernard      clean up the definitions to rtdef.h
+N * 2010-04-11     yi.qiu       add module feature
+N * 2013-06-24     Bernard      add rt_kprintf re-define when not use RT_USING_CONSOLE.
+N * 2016-08-09     ArdaFu       add new thread and interrupt hook.
+N */
+N
+N#ifndef __RT_THREAD_H__
+N#define __RT_THREAD_H__
+N
+N#include <rtconfig.h>
+L 1 "..\rtthread\rtconfig.h" 1
+N/* RT-Thread config file */
+N
+N#ifndef __RTTHREAD_CFG_H__
+N#define __RTTHREAD_CFG_H__
+N
+N//#include "RTE_Components.h"
+N
+N// <<< Use Configuration Wizard in Context Menu >>>
+N// <h>Basic Configuration
+N// <o>Maximal level of thread priority <8-256>
+N//	<i>Default: 32
+N#define RT_THREAD_PRIORITY_MAX  32
+N// <o>OS tick per second
+N//  <i>Default: 1000   (1ms)
+N#define RT_TICK_PER_SECOND	1000
+N// <o>Alignment size for CPU architecture data access
+N//	<i>Default: 4
+N#define RT_ALIGN_SIZE   4
+N// <o>the max length of object name<2-16>
+N//	<i>Default: 8
+N#define RT_NAME_MAX	   8
+N// <c1>Using RT-Thread components initialization
+N//  <i>Using RT-Thread components initialization
+N#define RT_USING_COMPONENTS_INIT
+N// </c>
+N// <c1>Using user main
+N//  <i>Using user main
+N#define RT_USING_USER_MAIN
+N// </c>
+N// <o>the size of main thread<1-4086>
+N//	<i>Default: 512
+N#define RT_MAIN_THREAD_STACK_SIZE     512
+N
+N// </h>
+N
+N// <h>Debug Configuration
+N// <c1>enable kernel debug configuration
+N//  <i>Default: enable kernel debug configuration
+N//#define RT_DEBUG
+N// </c>
+N// <o>enable components initialization debug configuration<0-1>
+N//  <i>Default: 0
+N#define RT_DEBUG_INIT 0
+N// <c1>thread stack over flow detect
+N//  <i> Diable Thread stack over flow detect
+N//#define RT_USING_OVERFLOW_CHECK
+N// </c>
+N// </h>
+N
+N// <h>Hook Configuration
+N// <c1>using hook
+N//  <i>using hook
+N//#define RT_USING_HOOK
+N// </c>
+N// <c1>using idle hook
+N//  <i>using idle hook
+N//#define RT_USING_IDLE_HOOK
+N// </c>
+N// </h>
+N
+N// <e>Software timers Configuration
+N// <i> Enables user timers
+N#define RT_USING_TIMER_SOFT         0
+N#if RT_USING_TIMER_SOFT == 0
+X#if 0 == 0
+N#undef RT_USING_TIMER_SOFT
+N#endif
+N// <o>The priority level of timer thread <0-31>
+N//  <i>Default: 4
+N#define RT_TIMER_THREAD_PRIO		4
+N// <o>The stack size of timer thread <0-8192>
+N//  <i>Default: 512
+N#define RT_TIMER_THREAD_STACK_SIZE	512
+N// <o>The soft-timer tick per second <0-1000>
+N//  <i>Default: 100
+N#define RT_TIMER_TICK_PER_SECOND	100
+N// </e>
+N
+N// <h>IPC(Inter-process communication) Configuration
+N// <c1>Using Semaphore
+N//  <i>Using Semaphore
+N#define RT_USING_SEMAPHORE
+N// </c>
+N// <c1>Using Mutex
+N//  <i>Using Mutex
+N//#define RT_USING_MUTEX
+N// </c>
+N// <c1>Using Event
+N//  <i>Using Event
+N//#define RT_USING_EVENT
+N// </c>
+N// <c1>Using MailBox
+N//  <i>Using MailBox
+N#define RT_USING_MAILBOX
+N// </c>
+N// <c1>Using Message Queue
+N//  <i>Using Message Queue
+N//#define RT_USING_MESSAGEQUEUE
+N// </c>
+N// </h>
+N
+N// <h>Memory Management Configuration
+N// <c1>Using Memory Pool Management
+N//  <i>Using Memory Pool Management
+N//#define RT_USING_MEMPOOL
+N// </c>
+N// <c1>Dynamic Heap Management
+N//  <i>Dynamic Heap Management
+N#define RT_USING_HEAP
+N// </c>
+N// <c1>using small memory
+N//  <i>using small memory
+N#define RT_USING_SMALL_MEM
+N// </c>
+N// <c1>using tiny size of memory
+N//  <i>using tiny size of memory
+N//#define RT_USING_TINY_SIZE
+N// </c>
+N// </h>
+N
+N// <h>Console Configuration
+N// <c1>Using console
+N//  <i>Using console
+N#define RT_USING_CONSOLE
+N// </c>
+N// <o>the buffer size of console <1-1024>
+N//  <i>the buffer size of console
+N//  <i>Default: 128  (128Byte)
+N#define RT_CONSOLEBUF_SIZE          128
+N// <s>The device name for console
+N//  <i>The device name for console
+N//  <i>Default: uart1
+N#define RT_CONSOLE_DEVICE_NAME      "uart1"
+N// </h>
+N
+N
+N#if defined(RTE_FINSH_USING_MSH)
+X#if 0L
+S#define RT_USING_FINSH
+S#define FINSH_USING_MSH
+S#define FINSH_USING_MSH_ONLY
+S// <h>Finsh Configuration
+S// <o>the priority of finsh thread <1-7>
+S//  <i>the priority of finsh thread
+S//  <i>Default: 6
+S#define __FINSH_THREAD_PRIORITY     5
+S#define FINSH_THREAD_PRIORITY       (RT_THREAD_PRIORITY_MAX / 8 * __FINSH_THREAD_PRIORITY + 1)
+S// <o>the stack of finsh thread <1-4096>
+S//  <i>the stack of finsh thread
+S//  <i>Default: 4096  (4096Byte)
+S#define FINSH_THREAD_STACK_SIZE     512
+S// <o>the history lines of finsh thread <1-32>
+S//  <i>the history lines of finsh thread
+S//  <i>Default: 5
+S#define FINSH_HISTORY_LINES	        1
+S// <c1>Using symbol table in finsh shell
+S//  <i>Using symbol table in finsh shell
+S#define FINSH_USING_SYMTAB
+S// </c>
+S// </h>
+N#endif
+N
+N#if defined(RTE_USING_DEVICE)
+X#if 0L
+S#define RT_USING_DEVICE
+N#endif
+N
+N// <<< end of configuration section >>>
+N
+N#endif
+L 36 "..\rtthread\include\rtthread.h" 2
+N#include <rtdebug.h>
+L 1 "..\rtthread\include\rtdebug.h" 1
+N/*
+N * File      : rtdebug.h
+N * This file is part of RT-Thread RTOS
+N * COPYRIGHT (C) 2006 - 2018, RT-Thread Development Team
+N *
+N *  This program is free software; you can redistribute it and/or modify
+N *  it under the terms of the GNU General Public License as published by
+N *  the Free Software Foundation; either version 2 of the License, or
+N *  (at your option) any later version.
+N *
+N *  This program is distributed in the hope that it will be useful,
+N *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+N *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+N *  GNU General Public License for more details.
+N *
+N *  You should have received a copy of the GNU General Public License along
+N *  with this program; if not, write to the Free Software Foundation, Inc.,
+N *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+N */
+N
+N#ifndef __RTDEBUG_H__
+N#define __RTDEBUG_H__
+N
+N#include <rtconfig.h>
+N
+N/* settings depend check */
+N#ifdef RT_USING_POSIX
+S#if !defined(RT_USING_DFS) || !defined(RT_USING_DFS_DEVFS)
+S#error "POSIX poll/select, stdin need file system(RT_USING_DFS) and device file system(RT_USING_DFS_DEVFS)"
+S#endif
+S
+S#if defined(RT_USING_LWIP) && !defined(RT_USING_DFS_NET)
+S#error "POSIX poll/select, stdin need file BSD socket API(RT_USING_DFS_NET)"
+S#endif
+S
+S#if !defined(RT_USING_LIBC)
+S#error "POSIX layer need standard C library(RT_USING_LIBC)"
+S#endif
+S
+N#endif
+N
+N#ifdef RT_USING_POSIX_TERMIOS
+S#if !defined(RT_USING_POSIX)
+S#error "termios need POSIX layer(RT_USING_POSIX)"
+S#endif
+N#endif
+N
+N/* Using this macro to control all kernel debug features. */
+N#ifdef RT_DEBUG
+S
+S/* Turn on some of these (set to non-zero) to debug kernel */
+S#ifndef RT_DEBUG_MEM
+S#define RT_DEBUG_MEM                   0
+S#endif
+S
+S#ifndef RT_DEBUG_MEMHEAP
+S#define RT_DEBUG_MEMHEAP               0
+S#endif
+S
+S#ifndef RT_DEBUG_MODULE
+S#define RT_DEBUG_MODULE                0
+S#endif
+S
+S#ifndef RT_DEBUG_SCHEDULER
+S#define RT_DEBUG_SCHEDULER             0
+S#endif
+S
+S#ifndef RT_DEBUG_SLAB
+S#define RT_DEBUG_SLAB                  0
+S#endif
+S
+S#ifndef RT_DEBUG_THREAD
+S#define RT_DEBUG_THREAD                0
+S#endif
+S
+S#ifndef RT_DEBUG_TIMER
+S#define RT_DEBUG_TIMER                 0
+S#endif
+S
+S#ifndef RT_DEBUG_IRQ
+S#define RT_DEBUG_IRQ                   0
+S#endif
+S
+S#ifndef RT_DEBUG_IPC
+S#define RT_DEBUG_IPC                   0
+S#endif
+S
+S#ifndef RT_DEBUG_INIT
+S#define RT_DEBUG_INIT                  0
+S#endif
+S
+S/* Turn on this to enable context check */
+S#ifndef RT_DEBUG_CONTEXT_CHECK
+S#define RT_DEBUG_CONTEXT_CHECK         1
+S#endif
+S
+S#define RT_DEBUG_LOG(type, message)                                           \
+Sdo                                                                            \
+S{                                                                             \
+S    if (type)                                                                 \
+S        rt_kprintf message;                                                   \
+S}                                                                             \
+Swhile (0)
+X#define RT_DEBUG_LOG(type, message)                                           do                                                                            {                                                                                 if (type)                                                                         rt_kprintf message;                                                   }                                                                             while (0)
+S
+S#define RT_ASSERT(EX)                                                         \
+Sif (!(EX))                                                                    \
+S{                                                                             \
+S    rt_assert_handler(#EX, __FUNCTION__, __LINE__);                           \
+S}
+X#define RT_ASSERT(EX)                                                         if (!(EX))                                                                    {                                                                                 rt_assert_handler(#EX, __FUNCTION__, __LINE__);                           }
+S
+S/* Macro to check current context */
+S#if RT_DEBUG_CONTEXT_CHECK
+S#define RT_DEBUG_NOT_IN_INTERRUPT                                             \
+Sdo                                                                            \
+S{                                                                             \
+S    rt_base_t level;                                                          \
+S    level = rt_hw_interrupt_disable();                                        \
+S    if (rt_interrupt_get_nest() != 0)                                         \
+S    {                                                                         \
+S        rt_kprintf("Function[%s] shall not ne used in ISR\n", __FUNCTION__);  \
+S        RT_ASSERT(0)                                                          \
+S    }                                                                         \
+S    rt_hw_interrupt_enable(level);                                            \
+S}                                                                             \
+Swhile (0)
+X#define RT_DEBUG_NOT_IN_INTERRUPT                                             do                                                                            {                                                                                 rt_base_t level;                                                              level = rt_hw_interrupt_disable();                                            if (rt_interrupt_get_nest() != 0)                                             {                                                                                 rt_kprintf("Function[%s] shall not ne used in ISR\n", __FUNCTION__);          RT_ASSERT(0)                                                              }                                                                             rt_hw_interrupt_enable(level);                                            }                                                                             while (0)
+S
+S/* "In thread context" means:
+S *     1) the scheduler has been started
+S *     2) not in interrupt context.
+S */
+S#define RT_DEBUG_IN_THREAD_CONTEXT                                            \
+Sdo                                                                            \
+S{                                                                             \
+S    rt_base_t level;                                                          \
+S    level = rt_hw_interrupt_disable();                                        \
+S    if (rt_thread_self() == RT_NULL)                                          \
+S    {                                                                         \
+S        rt_kprintf("Function[%s] shall not be used before scheduler start\n", \
+S                   __FUNCTION__);                                             \
+S        RT_ASSERT(0)                                                          \
+S    }                                                                         \
+S    RT_DEBUG_NOT_IN_INTERRUPT;                                                \
+S    rt_hw_interrupt_enable(level);                                            \
+S}                                                                             \
+Swhile (0)
+X#define RT_DEBUG_IN_THREAD_CONTEXT                                            do                                                                            {                                                                                 rt_base_t level;                                                              level = rt_hw_interrupt_disable();                                            if (rt_thread_self() == RT_NULL)                                              {                                                                                 rt_kprintf("Function[%s] shall not be used before scheduler start\n",                    __FUNCTION__);                                                     RT_ASSERT(0)                                                              }                                                                             RT_DEBUG_NOT_IN_INTERRUPT;                                                    rt_hw_interrupt_enable(level);                                            }                                                                             while (0)
+S#else
+S#define RT_DEBUG_NOT_IN_INTERRUPT
+S#define RT_DEBUG_IN_THREAD_CONTEXT
+S#endif
+S
+N#else /* RT_DEBUG */
+N
+N#define RT_ASSERT(EX)
+N#define RT_DEBUG_LOG(type, message)
+N#define RT_DEBUG_NOT_IN_INTERRUPT
+N#define RT_DEBUG_IN_THREAD_CONTEXT
+N
+N#endif /* RT_DEBUG */
+N
+N#endif /* __RTDEBUG_H__ */
+L 37 "..\rtthread\include\rtthread.h" 2
+N#include <rtdef.h>
+L 1 "..\rtthread\include\rtdef.h" 1
+N/*
+N * File      : rtdef.h
+N * This file is part of RT-Thread RTOS
+N * COPYRIGHT (C) 2006 - 2018, RT-Thread Development Team
+N *
+N *  This program is free software; you can redistribute it and/or modify
+N *  it under the terms of the GNU General Public License as published by
+N *  the Free Software Foundation; either version 2 of the License, or
+N *  (at your option) any later version.
+N *
+N *  This program is distributed in the hope that it will be useful,
+N *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+N *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+N *  GNU General Public License for more details.
+N *
+N *  You should have received a copy of the GNU General Public License along
+N *  with this program; if not, write to the Free Software Foundation, Inc.,
+N *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+N *
+N * Change Logs:
+N * Date           Author       Notes
+N * 2007-01-10     Bernard      the first version
+N * 2008-07-12     Bernard      remove all rt_int8, rt_uint32_t etc typedef
+N * 2010-10-26     yi.qiu       add module support
+N * 2010-11-10     Bernard      add cleanup callback function in thread exit.
+N * 2011-05-09     Bernard      use builtin va_arg in GCC 4.x
+N * 2012-11-16     Bernard      change RT_NULL from ((void*)0) to 0.
+N * 2012-12-29     Bernard      change the RT_USING_MEMPOOL location and add
+N *                             RT_USING_MEMHEAP condition.
+N * 2012-12-30     Bernard      add more control command for graphic.
+N * 2013-01-09     Bernard      change version number.
+N * 2015-02-01     Bernard      change version number to v2.1.0
+N * 2017-08-31     Bernard      change version number to v3.0.0
+N * 2017-11-30     Bernard      change version number to v3.0.1
+N * 2017-12-27     Bernard      change version number to v3.0.2
+N * 2018-02-24     Bernard      change version number to v3.0.3
+N */
+N
+N#ifndef __RT_DEF_H__
+N#define __RT_DEF_H__
+N
+N/* include rtconfig header to import configuration */
+N#include <rtconfig.h>
+N
+N#ifdef __cplusplus
+Sextern "C" {
+N#endif
+N
+N/**
+N * @addtogroup BasicDef
+N */
+N
+N/*@{*/
+N
+N/* RT-Thread version information */
+N#define RT_VERSION                      3L              /**< major version number */
+N#define RT_SUBVERSION                   0L              /**< minor version number */
+N#define RT_REVISION                     3L              /**< revise version number */
+N
+N/* RT-Thread version */
+N#define RTTHREAD_VERSION                ((RT_VERSION * 10000) + \
+N                                         (RT_SUBVERSION * 100) + RT_REVISION)
+X#define RTTHREAD_VERSION                ((RT_VERSION * 10000) +                                          (RT_SUBVERSION * 100) + RT_REVISION)
+N
+N/* RT-Thread basic data type definitions */
+Ntypedef signed   char                   rt_int8_t;      /**<  8bit integer type */
+Ntypedef signed   short                  rt_int16_t;     /**< 16bit integer type */
+Ntypedef signed   long                   rt_int32_t;     /**< 32bit integer type */
+Ntypedef unsigned char                   rt_uint8_t;     /**<  8bit unsigned integer type */
+Ntypedef unsigned short                  rt_uint16_t;    /**< 16bit unsigned integer type */
+Ntypedef unsigned long                   rt_uint32_t;    /**< 32bit unsigned integer type */
+Ntypedef int                             rt_bool_t;      /**< boolean type */
+N
+N/* 32bit CPU */
+Ntypedef long                            rt_base_t;      /**< Nbit CPU related date type */
+Ntypedef unsigned long                   rt_ubase_t;     /**< Nbit unsigned CPU related data type */
+N
+Ntypedef rt_base_t                       rt_err_t;       /**< Type for error number */
+Ntypedef rt_uint32_t                     rt_time_t;      /**< Type for time stamp */
+Ntypedef rt_uint32_t                     rt_tick_t;      /**< Type for tick count */
+Ntypedef rt_base_t                       rt_flag_t;      /**< Type for flags */
+Ntypedef rt_ubase_t                      rt_size_t;      /**< Type for size number */
+Ntypedef rt_ubase_t                      rt_dev_t;       /**< Type for device */
+Ntypedef rt_base_t                       rt_off_t;       /**< Type for offset */
+N
+N/* boolean type definitions */
+N#define RT_TRUE                         1               /**< boolean true  */
+N#define RT_FALSE                        0               /**< boolean fails */
+N
+N/*@}*/
+N
+N/* maximum value of base type */
+N#define RT_UINT8_MAX                    0xff            /**< Maxium number of UINT8 */
+N#define RT_UINT16_MAX                   0xffff          /**< Maxium number of UINT16 */
+N#define RT_UINT32_MAX                   0xffffffff      /**< Maxium number of UINT32 */
+N#define RT_TICK_MAX                     RT_UINT32_MAX   /**< Maxium number of tick */
+N
+N/* Compiler Related Definitions */
+N#ifdef __CC_ARM                         /* ARM Compiler */
+N    #include <stdarg.h>
+L 1 "D:\Software\Keil\ARM\ARMCC\Bin\..\include\stdarg.h" 1
+N/* stdarg.h: ANSI 'C' (X3J11 Oct 88) library header, section 4.8 */
+N/* Copyright (C) Codemist Ltd., 1988                            */
+N/* Copyright (C) ARM Ltd., 1991-1999. All rights reserved */
+N
+N/*
+N * RCS $Revision$
+N * Checkin $Date$
+N * Revising $Author: agrant $
+N */
+N
+N#ifndef __stdarg_h
+N#define __stdarg_h
+N#define __ARMCLIB_VERSION 5060044
+N
+N  #ifndef __STDARG_DECLS
+N  #define __STDARG_DECLS
+N
+N    #undef __CLIBNS
+N
+N    #ifdef __cplusplus
+S      namespace std {
+S          #define __CLIBNS ::std::
+S          extern "C" {
+N    #else
+N      #define __CLIBNS
+N    #endif  /* __cplusplus */
+N
+N/*
+N * stdarg.h declares a type and defines macros for advancing through a
+N * list of arguments whose number and types are not known to the called
+N * function when it is translated. A function may be called with a variable
+N * number of arguments of differing types. Its parameter list contains one or
+N * more parameters. The rightmost parameter plays a special role in the access
+N * mechanism, and will be called parmN in this description.
+N */
+N
+N/* N.B. <stdio.h> is required to declare vfprintf() without defining      */
+N/* va_list.  Clearly the type __va_list there must keep in step.          */
+N#ifdef __clang__
+S  typedef __builtin_va_list va_list;
+S  #define va_start(ap, param) __builtin_va_start(ap, param)
+S  #define va_end(ap)          __builtin_va_end(ap)
+S  #define va_arg(ap, type)    __builtin_va_arg(ap, type)
+S  #if __STDC_VERSION__ >= 199900L || __cplusplus >= 201103L || !defined(__STRICT_ANSI__)
+S  #define va_copy(dest, src)  __builtin_va_copy(dest, src)
+S  #endif
+N#else
+N  #ifdef __TARGET_ARCH_AARCH64
+S    typedef struct __va_list {
+S      void *__stack;
+S      void *__gr_top;
+S      void *__vr_top;
+S      int __gr_offs;
+S      int __vr_offs;
+S    } va_list;
+N  #else
+N    typedef struct __va_list { void *__ap; } va_list;
+N  #endif
+N   /*
+N    * an array type suitable for holding information needed by the macro va_arg
+N    * and the function va_end. The called function shall declare a variable
+N    * (referred to as ap) having type va_list. The variable ap may be passed as
+N    * an argument to another function.
+N    * Note: va_list is an array type so that when an object of that type
+N    * is passed as an argument it gets passed by reference.
+N    */
+N  #define va_start(ap, parmN) __va_start(ap, parmN)
+N
+N   /*
+N    * The va_start macro shall be executed before any access to the unnamed
+N    * arguments. The parameter ap points to an object that has type va_list.
+N    * The va_start macro initialises ap for subsequent use by va_arg and
+N    * va_end. The parameter parmN is the identifier of the rightmost parameter
+N    * in the variable parameter list in the function definition (the one just
+N    * before the '...'). If the parameter parmN is declared with the register
+N    * storage class an error is given.
+N    * If parmN is a narrow type (char, short, float) an error is given in
+N    * strict ANSI mode, or a warning otherwise.
+N    * Returns: no value.
+N    */
+N  #define va_arg(ap, type) __va_arg(ap, type)
+N
+N   /*
+N    * The va_arg macro expands to an expression that has the type and value of
+N    * the next argument in the call. The parameter ap shall be the same as the
+N    * va_list ap initialised by va_start. Each invocation of va_arg modifies
+N    * ap so that successive arguments are returned in turn. The parameter
+N    * 'type' is a type name such that the type of a pointer to an object that
+N    * has the specified type can be obtained simply by postfixing a * to
+N    * 'type'. If type is a narrow type, an error is given in strict ANSI
+N    * mode, or a warning otherwise. If the type is an array or function type,
+N    * an error is given.
+N    * In non-strict ANSI mode, 'type' is allowed to be any expression.
+N    * Returns: The first invocation of the va_arg macro after that of the
+N    *          va_start macro returns the value of the argument after that
+N    *          specified by parmN. Successive invocations return the values of
+N    *          the remaining arguments in succession.
+N    *          The result is cast to 'type', even if 'type' is narrow.
+N    */
+N
+N#define __va_copy(dest, src) ((void)((dest) = (src)))
+N
+N#if !defined(__STRICT_ANSI__) || (defined(__STDC_VERSION__) && 199901L <= __STDC_VERSION__) || (defined(__cplusplus) && 201103L <= __cplusplus)
+X#if !0L || (1L && 199901L <= 199901L) || (0L && 201103L <= __cplusplus)
+N   /* va_copy is in C99 and non-strict C90 and non-strict C++
+N    * __va_copy is always present.
+N    */
+N  #define va_copy(dest, src) ((void)((dest) = (src)))
+N
+N   /* The va_copy macro makes the va_list dest be a copy of
+N    * the va_list src, as if the va_start macro had been applied
+N    * to it followed by the same sequence of uses of the va_arg
+N    * macro as had previously been used to reach the present state
+N    * of src.
+N    */
+N#endif
+N
+N#define va_end(ap) __va_end(ap)
+N   /*
+N    * The va_end macro facilitates a normal return from the function whose
+N    * variable argument list was referenced by the expansion of va_start that
+N    * initialised the va_list ap. If the va_end macro is not invoked before
+N    * the return, the behaviour is undefined.
+N    * Returns: no value.
+N    */
+N#endif /* __clang__ */
+N
+N    #ifdef __cplusplus
+S         }  /* extern "C" */
+S      }  /* namespace std */
+N    #endif /* __cplusplus */
+N
+N    #ifdef __GNUC__
+N     /* be cooperative with glibc */
+N     typedef __CLIBNS va_list __gnuc_va_list;
+X     typedef  va_list __gnuc_va_list;
+N     #define __GNUC_VA_LIST
+N     #undef __need___va_list
+N    #endif
+N
+N  #endif /* __STDARG_DECLS */
+N
+N  #ifdef __cplusplus
+S    #ifndef __STDARG_NO_EXPORTS
+S      using ::std::va_list;
+S    #endif
+N  #endif /* __cplusplus */
+N#endif
+N
+N/* end of stdarg.h */
+N
+L 100 "..\rtthread\include\rtdef.h" 2
+N    #define SECTION(x)                  __attribute__((section(x)))
+N    #define RT_UNUSED                   __attribute__((unused))
+N    #define RT_USED                     __attribute__((used))
+N    #define ALIGN(n)                    __attribute__((aligned(n)))
+N    #define RT_WEAK                     __weak
+N    #define rt_inline                   static __inline
+N    /* module compiling */
+N    #ifdef RT_USING_MODULE
+S        #define RTT_API                 __declspec(dllimport)
+N    #else
+N        #define RTT_API                 __declspec(dllexport)
+N    #endif
+N
+N#elif defined (__IAR_SYSTEMS_ICC__)     /* for IAR Compiler */
+X#elif 0L      
+S    #include <stdarg.h>
+S    #define SECTION(x)                  @ x
+S    #define RT_UNUSED
+S    #define RT_USED                     __root
+S    #define PRAGMA(x)                   _Pragma(#x)
+S    #define ALIGN(n)                    PRAGMA(data_alignment=n)
+S    #define RT_WEAK                     __weak
+S    #define rt_inline                   static inline
+S    #define RTT_API
+S
+S#elif defined (__GNUC__)                /* GNU GCC Compiler */
+S    #ifdef RT_USING_NEWLIB
+S        #include <stdarg.h>
+S    #else
+S        /* the version of GNU GCC must be greater than 4.x */
+S        typedef __builtin_va_list   __gnuc_va_list;
+S        typedef __gnuc_va_list      va_list;
+S        #define va_start(v,l)       __builtin_va_start(v,l)
+S        #define va_end(v)           __builtin_va_end(v)
+S        #define va_arg(v,l)         __builtin_va_arg(v,l)
+S    #endif
+S
+S    #define SECTION(x)                  __attribute__((section(x)))
+S    #define RT_UNUSED                   __attribute__((unused))
+S    #define RT_USED                     __attribute__((used))
+S    #define ALIGN(n)                    __attribute__((aligned(n)))
+S    #define RT_WEAK                     __attribute__((weak))
+S    #define rt_inline                   static __inline
+S    #define RTT_API
+S#elif defined (__ADSPBLACKFIN__)        /* for VisualDSP++ Compiler */
+S    #include <stdarg.h>
+S    #define SECTION(x)                  __attribute__((section(x)))
+S    #define RT_UNUSED                   __attribute__((unused))
+S    #define RT_USED                     __attribute__((used))
+S    #define ALIGN(n)                    __attribute__((aligned(n)))
+S    #define RT_WEAK                     __attribute__((weak))
+S    #define rt_inline                   static inline
+S    #define RTT_API
+S#elif defined (_MSC_VER)
+S    #include <stdarg.h>
+S    #define SECTION(x)
+S    #define RT_UNUSED
+S    #define RT_USED
+S    #define ALIGN(n)                    __declspec(align(n))
+S    #define RT_WEAK
+S    #define rt_inline                   static __inline
+S    #define RTT_API
+S#elif defined (__TI_COMPILER_VERSION__)
+S    #include <stdarg.h>
+S    /* The way that TI compiler set section is different from other(at least
+S     * GCC and MDK) compilers. See ARM Optimizing C/C++ Compiler 5.9.3 for more
+S     * details. */
+S    #define SECTION(x)
+S    #define RT_UNUSED
+S    #define RT_USED
+S    #define PRAGMA(x)                   _Pragma(#x)
+S    #define ALIGN(n)
+S    #define RT_WEAK
+S    #define rt_inline                   static inline
+S    #define RTT_API
+S#else
+S    #error not supported tool chain
+N#endif
+N
+N/* initialization export */
+N#ifdef RT_USING_COMPONENTS_INIT
+Ntypedef int (*init_fn_t)(void);
+N#ifdef _MSC_VER /* we do not support MS VC++ compiler */
+S    #define INIT_EXPORT(fn, level)
+N#else
+N    #if RT_DEBUG_INIT
+X    #if 0
+S        struct rt_init_desc
+S        {
+S            const char* fn_name;
+S            const init_fn_t fn;
+S        };
+S        #define INIT_EXPORT(fn, level)          \
+S            RT_USED const char __rti_##fn##_name[] = #fn; \
+S            RT_USED const struct rt_init_desc __rt_init_desc_##fn SECTION(".rti_fn."level) = \
+S            { __rti_##fn##_name, fn};
+X        #define INIT_EXPORT(fn, level)                      RT_USED const char __rti_##fn##_name[] = #fn;             RT_USED const struct rt_init_desc __rt_init_desc_##fn SECTION(".rti_fn."level) =             { __rti_##fn##_name, fn};
+N    #else
+N        #define INIT_EXPORT(fn, level)  \
+N            RT_USED const init_fn_t __rt_init_##fn SECTION(".rti_fn."level) = fn
+X        #define INIT_EXPORT(fn, level)              RT_USED const init_fn_t __rt_init_##fn SECTION(".rti_fn."level) = fn
+N    #endif
+N#endif
+N#else
+S#define INIT_EXPORT(fn, level)
+N#endif
+N
+N/* board init routines will be called in board_init() function */
+N#define INIT_BOARD_EXPORT(fn)           INIT_EXPORT(fn, "1")
+N
+N/* pre/device/component/env/app init routines will be called in init_thread */
+N/* components pre-initialization (pure software initilization) */
+N#define INIT_PREV_EXPORT(fn)            INIT_EXPORT(fn, "2")
+N/* device initialization */
+N#define INIT_DEVICE_EXPORT(fn)          INIT_EXPORT(fn, "3")
+N/* components initialization (dfs, lwip, ...) */
+N#define INIT_COMPONENT_EXPORT(fn)       INIT_EXPORT(fn, "4")
+N/* environment initialization (mount disk, ...) */
+N#define INIT_ENV_EXPORT(fn)             INIT_EXPORT(fn, "5")
+N/* appliation initialization (rtgui application etc ...) */
+N#define INIT_APP_EXPORT(fn)             INIT_EXPORT(fn, "6")
+N
+N#if !defined(RT_USING_FINSH)
+X#if !0L
+N/* define these to empty, even if not include finsh.h file */
+N#define FINSH_FUNCTION_EXPORT(name, desc)
+N#define FINSH_FUNCTION_EXPORT_ALIAS(name, alias, desc)
+N#define FINSH_VAR_EXPORT(name, type, desc)
+N
+N#define MSH_CMD_EXPORT(command, desc)
+N#define MSH_CMD_EXPORT_ALIAS(command, alias, desc)
+N#elif !defined(FINSH_USING_SYMTAB)
+X#elif !0L
+S#define FINSH_FUNCTION_EXPORT_CMD(name, cmd, desc)
+N#endif
+N
+N/* event length */
+N#define RT_EVENT_LENGTH                 32
+N
+N/* memory management option */
+N#define RT_MM_PAGE_SIZE                 4096
+N#define RT_MM_PAGE_MASK                 (RT_MM_PAGE_SIZE - 1)
+N#define RT_MM_PAGE_BITS                 12
+N
+N/* kernel malloc definitions */
+N#ifndef RT_KERNEL_MALLOC
+N#define RT_KERNEL_MALLOC(sz)            rt_malloc(sz)
+N#endif
+N
+N#ifndef RT_KERNEL_FREE
+N#define RT_KERNEL_FREE(ptr)             rt_free(ptr)
+N#endif
+N
+N#ifndef RT_KERNEL_REALLOC
+N#define RT_KERNEL_REALLOC(ptr, size)    rt_realloc(ptr, size)
+N#endif
+N
+N/**
+N * @addtogroup Error
+N */
+N
+N/*@{*/
+N
+N/* RT-Thread error code definitions */
+N#define RT_EOK                          0               /**< There is no error */
+N#define RT_ERROR                        1               /**< A generic error happens */
+N#define RT_ETIMEOUT                     2               /**< Timed out */
+N#define RT_EFULL                        3               /**< The resource is full */
+N#define RT_EEMPTY                       4               /**< The resource is empty */
+N#define RT_ENOMEM                       5               /**< No memory */
+N#define RT_ENOSYS                       6               /**< No system */
+N#define RT_EBUSY                        7               /**< Busy */
+N#define RT_EIO                          8               /**< IO error */
+N#define RT_EINTR                        9               /**< Interrupted system call */
+N#define RT_EINVAL                       10              /**< Invalid argument */
+N
+N/*@}*/
+N
+N/**
+N * @ingroup BasicDef
+N *
+N * @def RT_ALIGN(size, align)
+N * Return the most contiguous size aligned at specified width. RT_ALIGN(13, 4)
+N * would return 16.
+N */
+N#define RT_ALIGN(size, align)           (((size) + (align) - 1) & ~((align) - 1))
+N
+N/**
+N * @ingroup BasicDef
+N *
+N * @def RT_ALIGN_DOWN(size, align)
+N * Return the down number of aligned at specified width. RT_ALIGN_DOWN(13, 4)
+N * would return 12.
+N */
+N#define RT_ALIGN_DOWN(size, align)      ((size) & ~((align) - 1))
+N
+N/**
+N * @ingroup BasicDef
+N *
+N * @def RT_NULL
+N * Similar as the \c NULL in C library.
+N */
+N#define RT_NULL                         (0)
+N
+N/**
+N * Double List structure
+N */
+Nstruct rt_list_node
+N{
+N    struct rt_list_node *next;                          /**< point to next node. */
+N    struct rt_list_node *prev;                          /**< point to prev node. */
+N};
+Ntypedef struct rt_list_node rt_list_t;                  /**< Type for lists. */
+N
+N/**
+N * Single List structure
+N */
+Nstruct rt_slist_node
+N{
+N    struct rt_slist_node *next;                         /**< point to next node. */
+N};
+Ntypedef struct rt_slist_node rt_slist_t;                /**< Type for single list. */
+N
+N/**
+N * @addtogroup KernelObject
+N */
+N
+N/*@{*/
+N
+N/*
+N * kernel object macros
+N */
+N#define RT_OBJECT_FLAG_MODULE           0x80            /**< is module object. */
+N
+N/**
+N * Base structure of Kernel object
+N */
+Nstruct rt_object
+N{
+N    char       name[RT_NAME_MAX];                       /**< name of kernel object */
+X    char       name[8];                        
+N    rt_uint8_t type;                                    /**< type of kernel object */
+N    rt_uint8_t flag;                                    /**< flag of kernel object */
+N
+N#ifdef RT_USING_MODULE
+S    void      *module_id;                               /**< id of application module */
+N#endif
+N    rt_list_t  list;                                    /**< list node of kernel object */
+N};
+Ntypedef struct rt_object *rt_object_t;                  /**< Type for kernel objects. */
+N
+N/**
+N *  The object type can be one of the follows with specific
+N *  macros enabled:
+N *  - Thread
+N *  - Semaphore
+N *  - Mutex
+N *  - Event
+N *  - MailBox
+N *  - MessageQueue
+N *  - MemHeap
+N *  - MemPool
+N *  - Device
+N *  - Timer
+N *  - Module
+N *  - Unknown
+N *  - Static
+N */
+Nenum rt_object_class_type
+N{
+N    RT_Object_Class_Thread = 0,                         /**< The object is a thread. */
+N    RT_Object_Class_Semaphore,                          /**< The object is a semaphore. */
+N    RT_Object_Class_Mutex,                              /**< The object is a mutex. */
+N    RT_Object_Class_Event,                              /**< The object is a event. */
+N    RT_Object_Class_MailBox,                            /**< The object is a mail box. */
+N    RT_Object_Class_MessageQueue,                       /**< The object is a message queue. */
+N    RT_Object_Class_MemHeap,                            /**< The object is a memory heap */
+N    RT_Object_Class_MemPool,                            /**< The object is a memory pool. */
+N    RT_Object_Class_Device,                             /**< The object is a device */
+N    RT_Object_Class_Timer,                              /**< The object is a timer. */
+N    RT_Object_Class_Module,                             /**< The object is a module. */
+N    RT_Object_Class_Unknown,                            /**< The object is unknown. */
+N    RT_Object_Class_Static = 0x80                       /**< The object is a static object. */
+N};
+N
+N/**
+N * The information of the kernel object
+N */
+Nstruct rt_object_information
+N{
+N    enum rt_object_class_type type;                     /**< object class type */
+N    rt_list_t                 object_list;              /**< object list */
+N    rt_size_t                 object_size;              /**< object size */
+N};
+N
+N/**
+N * The hook function call macro
+N */
+N#ifdef RT_USING_HOOK
+S#define RT_OBJECT_HOOK_CALL(func, argv) \
+S    do { if ((func) != RT_NULL) func argv; } while (0)
+X#define RT_OBJECT_HOOK_CALL(func, argv)     do { if ((func) != RT_NULL) func argv; } while (0)
+N#else
+N#define RT_OBJECT_HOOK_CALL(func, argv)
+N#endif
+N
+N/*@}*/
+N
+N/**
+N * @addtogroup Clock
+N */
+N
+N/*@{*/
+N
+N/**
+N * clock & timer macros
+N */
+N#define RT_TIMER_FLAG_DEACTIVATED       0x0             /**< timer is deactive */
+N#define RT_TIMER_FLAG_ACTIVATED         0x1             /**< timer is active */
+N#define RT_TIMER_FLAG_ONE_SHOT          0x0             /**< one shot timer */
+N#define RT_TIMER_FLAG_PERIODIC          0x2             /**< periodic timer */
+N
+N#define RT_TIMER_FLAG_HARD_TIMER        0x0             /**< hard timer,the timer's callback function will be called in tick isr. */
+N#define RT_TIMER_FLAG_SOFT_TIMER        0x4             /**< soft timer,the timer's callback function will be called in timer thread. */
+N
+N#define RT_TIMER_CTRL_SET_TIME          0x0             /**< set timer control command */
+N#define RT_TIMER_CTRL_GET_TIME          0x1             /**< get timer control command */
+N#define RT_TIMER_CTRL_SET_ONESHOT       0x2             /**< change timer to one shot */
+N#define RT_TIMER_CTRL_SET_PERIODIC      0x3             /**< change timer to periodic */
+N
+N#ifndef RT_TIMER_SKIP_LIST_LEVEL
+N#define RT_TIMER_SKIP_LIST_LEVEL          1
+N#endif
+N
+N/* 1 or 3 */
+N#ifndef RT_TIMER_SKIP_LIST_MASK
+N#define RT_TIMER_SKIP_LIST_MASK         0x3
+N#endif
+N
+N/**
+N * timer structure
+N */
+Nstruct rt_timer
+N{
+N    struct rt_object parent;                            /**< inherit from rt_object */
+N
+N    rt_list_t        row[RT_TIMER_SKIP_LIST_LEVEL];
+X    rt_list_t        row[1];
+N
+N    void (*timeout_func)(void *parameter);              /**< timeout function */
+N    void            *parameter;                         /**< timeout function's parameter */
+N
+N    rt_tick_t        init_tick;                         /**< timer timeout tick */
+N    rt_tick_t        timeout_tick;                      /**< timeout tick */
+N};
+Ntypedef struct rt_timer *rt_timer_t;
+N
+N/*@}*/
+N
+N/**
+N * @addtogroup Signal
+N */
+N#ifdef RT_USING_SIGNALS
+S#include <libc/libc_signal.h>
+Stypedef unsigned long rt_sigset_t;
+Stypedef void (*rt_sighandler_t)(int signo);
+Stypedef siginfo_t rt_siginfo_t;
+S
+S#define RT_SIG_MAX          32
+N#endif
+N/*@}*/
+N
+N/**
+N * @addtogroup Thread
+N */
+N
+N/*@{*/
+N
+N/*
+N * Thread
+N */
+N
+N/*
+N * thread state definitions
+N */
+N#define RT_THREAD_INIT                  0x00                /**< Initialized status */
+N#define RT_THREAD_READY                 0x01                /**< Ready status */
+N#define RT_THREAD_SUSPEND               0x02                /**< Suspend status */
+N#define RT_THREAD_RUNNING               0x03                /**< Running status */
+N#define RT_THREAD_BLOCK                 RT_THREAD_SUSPEND   /**< Blocked status */
+N#define RT_THREAD_CLOSE                 0x04                /**< Closed status */
+N#define RT_THREAD_STAT_MASK             0x0f
+N
+N#define RT_THREAD_STAT_SIGNAL           0x10
+N#define RT_THREAD_STAT_SIGNAL_READY     (RT_THREAD_STAT_SIGNAL | RT_THREAD_READY)
+N#define RT_THREAD_STAT_SIGNAL_WAIT      0x20
+N#define RT_THREAD_STAT_SIGNAL_MASK      0xf0
+N
+N/**
+N * thread control command definitions
+N */
+N#define RT_THREAD_CTRL_STARTUP          0x00                /**< Startup thread. */
+N#define RT_THREAD_CTRL_CLOSE            0x01                /**< Close thread. */
+N#define RT_THREAD_CTRL_CHANGE_PRIORITY  0x02                /**< Change thread priority. */
+N#define RT_THREAD_CTRL_INFO             0x03                /**< Get thread information. */
+N
+N/**
+N * Thread structure
+N */
+Nstruct rt_thread
+N{
+N    /* rt object */
+N    char        name[RT_NAME_MAX];                      /**< the name of thread */
+X    char        name[8];                       
+N    rt_uint8_t  type;                                   /**< type of object */
+N    rt_uint8_t  flags;                                  /**< thread's flags */
+N
+N#ifdef RT_USING_MODULE
+S    void       *module_id;                              /**< id of application module */
+N#endif
+N
+N    rt_list_t   list;                                   /**< the object list */
+N    rt_list_t   tlist;                                  /**< the thread list */
+N
+N    /* stack point and entry */
+N    void       *sp;                                     /**< stack point */
+N    void       *entry;                                  /**< entry */
+N    void       *parameter;                              /**< parameter */
+N    void       *stack_addr;                             /**< stack address */
+N    rt_uint32_t stack_size;                             /**< stack size */
+N
+N    /* error code */
+N    rt_err_t    error;                                  /**< error code */
+N
+N    rt_uint8_t  stat;                                   /**< thread status */
+N
+N    /* priority */
+N    rt_uint8_t  current_priority;                       /**< current priority */
+N    rt_uint8_t  init_priority;                          /**< initialized priority */
+N#if RT_THREAD_PRIORITY_MAX > 32
+X#if 32 > 32
+S    rt_uint8_t  number;
+S    rt_uint8_t  high_mask;
+N#endif
+N    rt_uint32_t number_mask;
+N
+N#if defined(RT_USING_EVENT)
+X#if 0L
+S    /* thread event */
+S    rt_uint32_t event_set;
+S    rt_uint8_t  event_info;
+N#endif
+N
+N#if defined(RT_USING_SIGNALS)
+X#if 0L
+S    rt_sigset_t     sig_pending;                        /**< the pending signals */
+S    rt_sigset_t     sig_mask;                           /**< the mask bits of signal */
+S
+S    void            *sig_ret;                           /**< the return stack pointer from signal */
+S    rt_sighandler_t *sig_vectors;                       /**< vectors of signal handler */
+S    void            *si_list;                           /**< the signal infor list */
+N#endif
+N
+N    rt_ubase_t  init_tick;                              /**< thread's initialized tick */
+N    rt_ubase_t  remaining_tick;                         /**< remaining tick */
+N
+N    struct rt_timer thread_timer;                       /**< built-in thread timer */
+N
+N    void (*cleanup)(struct rt_thread *tid);             /**< cleanup function when thread exit */
+N
+N    rt_uint32_t user_data;                              /**< private user data beyond this thread */
+N};
+Ntypedef struct rt_thread *rt_thread_t;
+N
+N/*@}*/
+N
+N/**
+N * @addtogroup IPC
+N */
+N
+N/*@{*/
+N
+N/**
+N * IPC flags and control command definitions
+N */
+N#define RT_IPC_FLAG_FIFO                0x00            /**< FIFOed IPC. @ref IPC. */
+N#define RT_IPC_FLAG_PRIO                0x01            /**< PRIOed IPC. @ref IPC. */
+N
+N#define RT_IPC_CMD_UNKNOWN              0x00            /**< unknown IPC command */
+N#define RT_IPC_CMD_RESET                0x01            /**< reset IPC object */
+N
+N#define RT_WAITING_FOREVER              -1              /**< Block forever until get resource. */
+N#define RT_WAITING_NO                   0               /**< Non-block. */
+N
+N/**
+N * Base structure of IPC object
+N */
+Nstruct rt_ipc_object
+N{
+N    struct rt_object parent;                            /**< inherit from rt_object */
+N
+N    rt_list_t        suspend_thread;                    /**< threads pended on this resource */
+N};
+N
+N#ifdef RT_USING_SEMAPHORE
+N/**
+N * Semaphore structure
+N */
+Nstruct rt_semaphore
+N{
+N    struct rt_ipc_object parent;                        /**< inherit from ipc_object */
+N
+N    rt_uint16_t          value;                         /**< value of semaphore. */
+N};
+Ntypedef struct rt_semaphore *rt_sem_t;
+N#endif
+N
+N#ifdef RT_USING_MUTEX
+S/**
+S * Mutual exclusion (mutex) structure
+S */
+Sstruct rt_mutex
+S{
+S    struct rt_ipc_object parent;                        /**< inherit from ipc_object */
+S
+S    rt_uint16_t          value;                         /**< value of mutex */
+S
+S    rt_uint8_t           original_priority;             /**< priority of last thread hold the mutex */
+S    rt_uint8_t           hold;                          /**< numbers of thread hold the mutex */
+S
+S    struct rt_thread    *owner;                         /**< current owner of mutex */
+S};
+Stypedef struct rt_mutex *rt_mutex_t;
+N#endif
+N
+N#ifdef RT_USING_EVENT
+S/**
+S * flag defintions in event
+S */
+S#define RT_EVENT_FLAG_AND               0x01            /**< logic and */
+S#define RT_EVENT_FLAG_OR                0x02            /**< logic or */
+S#define RT_EVENT_FLAG_CLEAR             0x04            /**< clear flag */
+S
+S/*
+S * event structure
+S */
+Sstruct rt_event
+S{
+S    struct rt_ipc_object parent;                        /**< inherit from ipc_object */
+S
+S    rt_uint32_t          set;                           /**< event set */
+S};
+Stypedef struct rt_event *rt_event_t;
+N#endif
+N
+N#ifdef RT_USING_MAILBOX
+N/**
+N * mailbox structure
+N */
+Nstruct rt_mailbox
+N{
+N    struct rt_ipc_object parent;                        /**< inherit from ipc_object */
+N
+N    rt_uint32_t         *msg_pool;                      /**< start address of message buffer */
+N
+N    rt_uint16_t          size;                          /**< size of message pool */
+N
+N    rt_uint16_t          entry;                         /**< index of messages in msg_pool */
+N    rt_uint16_t          in_offset;                     /**< input offset of the message buffer */
+N    rt_uint16_t          out_offset;                    /**< output offset of the message buffer */
+N
+N    rt_list_t            suspend_sender_thread;         /**< sender thread suspended on this mailbox */
+N};
+Ntypedef struct rt_mailbox *rt_mailbox_t;
+N#endif
+N
+N#ifdef RT_USING_MESSAGEQUEUE
+S/**
+S * message queue structure
+S */
+Sstruct rt_messagequeue
+S{
+S    struct rt_ipc_object parent;                        /**< inherit from ipc_object */
+S
+S    void                *msg_pool;                      /**< start address of message queue */
+S
+S    rt_uint16_t          msg_size;                      /**< message size of each message */
+S    rt_uint16_t          max_msgs;                      /**< max number of messages */
+S
+S    rt_uint16_t          entry;                         /**< index of messages in the queue */
+S
+S    void                *msg_queue_head;                /**< list head */
+S    void                *msg_queue_tail;                /**< list tail */
+S    void                *msg_queue_free;                /**< pointer indicated the free node of queue */
+S};
+Stypedef struct rt_messagequeue *rt_mq_t;
+N#endif
+N
+N/*@}*/
+N
+N/**
+N * @addtogroup MM
+N */
+N
+N/*@{*/
+N
+N/*
+N * memory management
+N * heap & partition
+N */
+N
+N#ifdef RT_USING_MEMHEAP
+S/**
+S * memory item on the heap
+S */
+Sstruct rt_memheap_item
+S{
+S    rt_uint32_t             magic;                      /**< magic number for memheap */
+S    struct rt_memheap      *pool_ptr;                   /**< point of pool */
+S
+S    struct rt_memheap_item *next;                       /**< next memheap item */
+S    struct rt_memheap_item *prev;                       /**< prev memheap item */
+S
+S    struct rt_memheap_item *next_free;                  /**< next free memheap item */
+S    struct rt_memheap_item *prev_free;                  /**< prev free memheap item */
+S};
+S
+S/**
+S * Base structure of memory heap object
+S */
+Sstruct rt_memheap
+S{
+S    struct rt_object        parent;                     /**< inherit from rt_object */
+S
+S    void                   *start_addr;                 /**< pool start address and size */
+S
+S    rt_uint32_t             pool_size;                  /**< pool size */
+S    rt_uint32_t             available_size;             /**< available size */
+S    rt_uint32_t             max_used_size;              /**< maximum allocated size */
+S
+S    struct rt_memheap_item *block_list;                 /**< used block list */
+S
+S    struct rt_memheap_item *free_list;                  /**< free block list */
+S    struct rt_memheap_item  free_header;                /**< free block list header */
+S
+S    struct rt_semaphore     lock;                       /**< semaphore lock */
+S};
+N#endif
+N
+N#ifdef RT_USING_MEMPOOL
+S/**
+S * Base structure of Memory pool object
+S */
+Sstruct rt_mempool
+S{
+S    struct rt_object parent;                            /**< inherit from rt_object */
+S
+S    void            *start_address;                     /**< memory pool start */
+S    rt_size_t        size;                              /**< size of memory pool */
+S
+S    rt_size_t        block_size;                        /**< size of memory blocks */
+S    rt_uint8_t      *block_list;                        /**< memory blocks list */
+S
+S    rt_size_t        block_total_count;                 /**< numbers of memory block */
+S    rt_size_t        block_free_count;                  /**< numbers of free memory block */
+S
+S    rt_list_t        suspend_thread;                    /**< threads pended on this resource */
+S    rt_size_t        suspend_thread_count;              /**< numbers of thread pended on this resource */
+S};
+Stypedef struct rt_mempool *rt_mp_t;
+N#endif
+N
+N/*@}*/
+N
+N#ifdef RT_USING_DEVICE
+N/**
+N * @addtogroup Device
+N */
+N
+N/*@{*/
+N
+N/**
+N * device (I/O) class type
+N */
+Nenum rt_device_class_type
+N{
+N    RT_Device_Class_Char = 0,                           /**< character device */
+N    RT_Device_Class_Block,                              /**< block device */
+N    RT_Device_Class_NetIf,                              /**< net interface */
+N    RT_Device_Class_MTD,                                /**< memory device */
+N    RT_Device_Class_CAN,                                /**< CAN device */
+N    RT_Device_Class_RTC,                                /**< RTC device */
+N    RT_Device_Class_Sound,                              /**< Sound device */
+N    RT_Device_Class_Graphic,                            /**< Graphic device */
+N    RT_Device_Class_I2CBUS,                             /**< I2C bus device */
+N    RT_Device_Class_USBDevice,                          /**< USB slave device */
+N    RT_Device_Class_USBHost,                            /**< USB host bus */
+N    RT_Device_Class_SPIBUS,                             /**< SPI bus device */
+N    RT_Device_Class_SPIDevice,                          /**< SPI device */
+N    RT_Device_Class_SDIO,                               /**< SDIO bus device */
+N    RT_Device_Class_PM,                                 /**< PM pseudo device */
+N    RT_Device_Class_Pipe,                               /**< Pipe device */
+N    RT_Device_Class_Portal,                             /**< Portal device */
+N    RT_Device_Class_Timer,                              /**< Timer device */
+N    RT_Device_Class_Miscellaneous,                      /**< Miscellaneous device */
+N    RT_Device_Class_Unknown                             /**< unknown device */
+N};
+N
+N/**
+N * device flags defitions
+N */
+N#define RT_DEVICE_FLAG_DEACTIVATE       0x000           /**< device is not not initialized */
+N
+N#define RT_DEVICE_FLAG_RDONLY           0x001           /**< read only */
+N#define RT_DEVICE_FLAG_WRONLY           0x002           /**< write only */
+N#define RT_DEVICE_FLAG_RDWR             0x003           /**< read and write */
+N
+N#define RT_DEVICE_FLAG_REMOVABLE        0x004           /**< removable device */
+N#define RT_DEVICE_FLAG_STANDALONE       0x008           /**< standalone device */
+N#define RT_DEVICE_FLAG_ACTIVATED        0x010           /**< device is activated */
+N#define RT_DEVICE_FLAG_SUSPENDED        0x020           /**< device is suspended */
+N#define RT_DEVICE_FLAG_STREAM           0x040           /**< stream mode */
+N
+N#define RT_DEVICE_FLAG_INT_RX           0x100           /**< INT mode on Rx */
+N#define RT_DEVICE_FLAG_DMA_RX           0x200           /**< DMA mode on Rx */
+N#define RT_DEVICE_FLAG_INT_TX           0x400           /**< INT mode on Tx */
+N#define RT_DEVICE_FLAG_DMA_TX           0x800           /**< DMA mode on Tx */
+N
+N#define RT_DEVICE_OFLAG_CLOSE           0x000           /**< device is closed */
+N#define RT_DEVICE_OFLAG_RDONLY          0x001           /**< read only access */
+N#define RT_DEVICE_OFLAG_WRONLY          0x002           /**< write only access */
+N#define RT_DEVICE_OFLAG_RDWR            0x003           /**< read and write */
+N#define RT_DEVICE_OFLAG_OPEN            0x008           /**< device is opened */
+N#define RT_DEVICE_OFLAG_MASK            0xf0f           /**< mask of open flag */
+N
+N/**
+N * general device commands
+N */
+N#define RT_DEVICE_CTRL_RESUME           0x01            /**< resume device */
+N#define RT_DEVICE_CTRL_SUSPEND          0x02            /**< suspend device */
+N#define RT_DEVICE_CTRL_CONFIG           0x03            /**< configure device */
+N
+N#define RT_DEVICE_CTRL_SET_INT          0x10            /**< set interrupt */
+N#define RT_DEVICE_CTRL_CLR_INT          0x11            /**< clear interrupt */
+N#define RT_DEVICE_CTRL_GET_INT          0x12            /**< get interrupt status */
+N
+N/**
+N * special device commands
+N */
+N#define RT_DEVICE_CTRL_CHAR_STREAM      0x10            /**< stream mode on char device */
+N#define RT_DEVICE_CTRL_BLK_GETGEOME     0x10            /**< get geometry information   */
+N#define RT_DEVICE_CTRL_BLK_SYNC         0x11            /**< flush data to block device */
+N#define RT_DEVICE_CTRL_BLK_ERASE        0x12            /**< erase block on block device */
+N#define RT_DEVICE_CTRL_BLK_AUTOREFRESH  0x13            /**< block device : enter/exit auto refresh mode */
+N#define RT_DEVICE_CTRL_NETIF_GETMAC     0x10            /**< get mac address */
+N#define RT_DEVICE_CTRL_MTD_FORMAT       0x10            /**< format a MTD device */
+N#define RT_DEVICE_CTRL_RTC_GET_TIME     0x10            /**< get time */
+N#define RT_DEVICE_CTRL_RTC_SET_TIME     0x11            /**< set time */
+N#define RT_DEVICE_CTRL_RTC_GET_ALARM    0x12            /**< get alarm */
+N#define RT_DEVICE_CTRL_RTC_SET_ALARM    0x13            /**< set alarm */
+N
+Ntypedef struct rt_device *rt_device_t;
+N/**
+N * Device structure
+N */
+Nstruct rt_device
+N{
+N    struct rt_object          parent;                   /**< inherit from rt_object */
+N
+N    enum rt_device_class_type type;                     /**< device type */
+N    rt_uint16_t               flag;                     /**< device flag */
+N    rt_uint16_t               open_flag;                /**< device open flag */
+N
+N    rt_uint8_t                ref_count;                /**< reference count */
+N    rt_uint8_t                device_id;                /**< 0 - 255 */
+N
+N    /* device call back */
+N    rt_err_t (*rx_indicate)(rt_device_t dev, rt_size_t size);
+N    rt_err_t (*tx_complete)(rt_device_t dev, void *buffer);
+N
+N    /* common device interface */
+N    rt_err_t  (*init)   (rt_device_t dev);
+N    rt_err_t  (*open)   (rt_device_t dev, rt_uint16_t oflag);
+N    rt_err_t  (*close)  (rt_device_t dev);
+N    rt_size_t (*read)   (rt_device_t dev, rt_off_t pos, void *buffer, rt_size_t size);
+N    rt_size_t (*write)  (rt_device_t dev, rt_off_t pos, const void *buffer, rt_size_t size);
+N    rt_err_t  (*control)(rt_device_t dev, int cmd, void *args);
+N
+N#if defined(RT_USING_POSIX)
+X#if 0L
+S    const struct dfs_file_ops *fops;
+S    rt_list_t wait_queue;
+N#endif
+N
+N    void                     *user_data;                /**< device private data */
+N};
+N
+N/**
+N * block device geometry structure
+N */
+Nstruct rt_device_blk_geometry
+N{
+N    rt_uint32_t sector_count;                           /**< count of sectors */
+N    rt_uint32_t bytes_per_sector;                       /**< number of bytes per sector */
+N    rt_uint32_t block_size;                             /**< number of bytes to erase one block */
+N};
+N
+N/**
+N * sector arrange struct on block device
+N */
+Nstruct rt_device_blk_sectors
+N{
+N    rt_uint32_t sector_begin;                           /**< begin sector */
+N    rt_uint32_t sector_end;                             /**< end sector   */
+N};
+N
+N/**
+N * cursor control command
+N */
+N#define RT_DEVICE_CTRL_CURSOR_SET_POSITION  0x10
+N#define RT_DEVICE_CTRL_CURSOR_SET_TYPE      0x11
+N
+N/**
+N * graphic device control command
+N */
+N#define RTGRAPHIC_CTRL_RECT_UPDATE      0
+N#define RTGRAPHIC_CTRL_POWERON          1
+N#define RTGRAPHIC_CTRL_POWEROFF         2
+N#define RTGRAPHIC_CTRL_GET_INFO         3
+N#define RTGRAPHIC_CTRL_SET_MODE         4
+N#define RTGRAPHIC_CTRL_GET_EXT          5
+N
+N/* graphic deice */
+Nenum
+N{
+N    RTGRAPHIC_PIXEL_FORMAT_MONO = 0,
+N    RTGRAPHIC_PIXEL_FORMAT_GRAY4,
+N    RTGRAPHIC_PIXEL_FORMAT_GRAY16,
+N    RTGRAPHIC_PIXEL_FORMAT_RGB332,
+N    RTGRAPHIC_PIXEL_FORMAT_RGB444,
+N    RTGRAPHIC_PIXEL_FORMAT_RGB565,
+N    RTGRAPHIC_PIXEL_FORMAT_RGB565P,
+N    RTGRAPHIC_PIXEL_FORMAT_BGR565 = RTGRAPHIC_PIXEL_FORMAT_RGB565P,
+N    RTGRAPHIC_PIXEL_FORMAT_RGB666,
+N    RTGRAPHIC_PIXEL_FORMAT_RGB888,
+N    RTGRAPHIC_PIXEL_FORMAT_ARGB888,
+N    RTGRAPHIC_PIXEL_FORMAT_ABGR888,
+N    RTGRAPHIC_PIXEL_FORMAT_ARGB565,
+N    RTGRAPHIC_PIXEL_FORMAT_ALPHA,
+N};
+N
+N/**
+N * build a pixel position according to (x, y) coordinates.
+N */
+N#define RTGRAPHIC_PIXEL_POSITION(x, y)  ((x << 16) | y)
+N
+N/**
+N * graphic device information structure
+N */
+Nstruct rt_device_graphic_info
+N{
+N    rt_uint8_t  pixel_format;                           /**< graphic format */
+N    rt_uint8_t  bits_per_pixel;                         /**< bits per pixel */
+N    rt_uint16_t reserved;                               /**< reserved field */
+N
+N    rt_uint16_t width;                                  /**< width of graphic device */
+N    rt_uint16_t height;                                 /**< height of graphic device */
+N
+N    rt_uint8_t *framebuffer;                            /**< frame buffer */
+N};
+N
+N/**
+N * rectangle information structure
+N */
+Nstruct rt_device_rect_info
+N{
+N    rt_uint16_t x;                                      /**< x coordinate */
+N    rt_uint16_t y;                                      /**< y coordinate */
+N    rt_uint16_t width;                                  /**< width */
+N    rt_uint16_t height;                                 /**< height */
+N};
+N
+N/**
+N * graphic operations
+N */
+Nstruct rt_device_graphic_ops
+N{
+N    void (*set_pixel) (const char *pixel, int x, int y);
+N    void (*get_pixel) (char *pixel, int x, int y);
+N
+N    void (*draw_hline)(const char *pixel, int x1, int x2, int y);
+N    void (*draw_vline)(const char *pixel, int x, int y1, int y2);
+N
+N    void (*blit_line) (const char *pixel, int x, int y, rt_size_t size);
+N};
+N#define rt_graphix_ops(device)          ((struct rt_device_graphic_ops *)(device->user_data))
+N
+N/*@}*/
+N#endif
+N
+N#ifdef RT_USING_MODULE
+S/**
+S * @addtogroup Module
+S */
+S
+S/*@{*/
+S
+S/*
+S * module system
+S */
+S
+S#define RT_MODULE_FLAG_WITHENTRY        0x00            /**< with entry point */
+S#define RT_MODULE_FLAG_WITHOUTENTRY     0x01            /**< without entry point */
+S
+S/**
+S * Application Module structure
+S */
+Sstruct rt_module
+S{
+S    struct rt_object             parent;                /**< inherit from object */
+S
+S    rt_uint32_t                  vstart_addr;           /**< VMA base address for the
+S                                                          first LOAD segment. */
+S    rt_uint8_t                  *module_space;          /**< module memory space */
+S
+S    void                        *module_entry;          /**< the entry address of module */
+S    rt_thread_t                  module_thread;         /**< the main thread of module */
+S
+S    rt_uint8_t                  *module_cmd_line;       /**< module command line */
+S    rt_uint32_t                  module_cmd_size;       /**< the size of module command line */
+S
+S#ifdef RT_USING_SLAB
+S    /* module memory allocator */
+S    void                        *mem_list;              /**< module's free memory list */
+S    void                        *page_array;            /**< module's using pages */
+S    rt_uint32_t                  page_cnt;              /**< module's using pages count */
+S#endif
+S
+S    rt_uint16_t                  nref;                  /**< reference count */
+S
+S    rt_uint16_t                  nsym;                  /**< number of symbol in the module */
+S    struct rt_module_symtab     *symtab;                /**< module symbol table */
+S
+S    rt_uint32_t                  user_data;             /**< arch data in the module */
+S
+S    /* object in this module, module object is the last basic object type */
+S    struct rt_object_information module_object[RT_Object_Class_Unknown];
+S};
+Stypedef struct rt_module *rt_module_t;
+S
+S/*@}*/
+N#endif
+N
+N/* definitions for libc */
+N#include "rtlibc.h"
+L 1 "..\rtthread\include\rtlibc.h" 1
+N/*
+N * File      : rtlibc.h
+N * This file is part of RT-Thread RTOS
+N * COPYRIGHT (C) 2017, RT-Thread Development Team
+N *
+N *  This program is free software; you can redistribute it and/or modify
+N *  it under the terms of the GNU General Public License as published by
+N *  the Free Software Foundation; either version 2 of the License, or
+N *  (at your option) any later version.
+N *
+N *  This program is distributed in the hope that it will be useful,
+N *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+N *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+N *  GNU General Public License for more details.
+N *
+N *  You should have received a copy of the GNU General Public License along
+N *  with this program; if not, write to the Free Software Foundation, Inc.,
+N *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+N *
+N * Change Logs:
+N * Date           Author       Notes
+N * 2017-01-21     Bernard      the first version
+N */
+N
+N#ifndef RTLIBC_H__
+N#define RTLIBC_H__
+N
+N/* definitions for libc if toolchain has no these definitions */
+N#include "libc/libc_stat.h"
+L 1 "..\rtthread\include\libc/libc_stat.h" 1
+N#ifndef LIBC_STAT_H__
+N#define LIBC_STAT_H__
+N
+N#include <rtconfig.h>
+N
+N#if defined(RT_USING_NEWLIB)
+X#if 0L
+S/* use header file of newlib */
+S#include <sys/stat.h>
+S
+S#elif defined(_WIN32)
+X#elif 0L
+S#include <sys/stat.h>
+S
+S#define S_IRWXU              00700
+S#define S_IRUSR              00400
+S#define S_IWUSR              00200
+S#define S_IXUSR              00100
+S
+S#define S_IRWXG              00070
+S#define S_IRGRP              00040
+S#define S_IWGRP              00020
+S#define S_IXGRP              00010
+S
+S#define S_IRWXO              00007
+S#define S_IROTH              00004
+S#define S_IWOTH              00002
+S#define S_IXOTH              00001
+S
+S#define S_IFSOCK             0140000
+S#define S_IFLNK              0120000
+S#define S_IFBLK              0060000
+S#define S_IFIFO              0010000
+S#define S_ISUID              0004000
+S#define S_ISGID              0002000
+S#define S_ISVTX              0001000
+S
+S#define S_ISDIR(m)           (((m) & S_IFMT) == S_IFDIR)
+S
+N#else
+N#define S_IFMT               00170000
+N#define S_IFSOCK             0140000
+N#define S_IFLNK              0120000
+N#define S_IFREG              0100000
+N#define S_IFBLK              0060000
+N#define S_IFDIR              0040000
+N#define S_IFCHR              0020000
+N#define S_IFIFO              0010000
+N#define S_ISUID              0004000
+N#define S_ISGID              0002000
+N#define S_ISVTX              0001000
+N
+N#define S_ISLNK(m)           (((m) & S_IFMT) == S_IFLNK)
+N#define S_ISREG(m)           (((m) & S_IFMT) == S_IFREG)
+N#define S_ISDIR(m)           (((m) & S_IFMT) == S_IFDIR)
+N#define S_ISCHR(m)           (((m) & S_IFMT) == S_IFCHR)
+N#define S_ISBLK(m)           (((m) & S_IFMT) == S_IFBLK)
+N#define S_ISFIFO(m)          (((m) & S_IFMT) == S_IFIFO)
+N#define S_ISSOCK(m)          (((m) & S_IFMT) == S_IFSOCK)
+N
+N#define S_IRWXU              00700
+N#define S_IRUSR              00400
+N#define S_IWUSR              00200
+N#define S_IXUSR              00100
+N
+N#define S_IRWXG              00070
+N#define S_IRGRP              00040
+N#define S_IWGRP              00020
+N#define S_IXGRP              00010
+N
+N#define S_IRWXO              00007
+N#define S_IROTH              00004
+N#define S_IWOTH              00002
+N#define S_IXOTH              00001
+N
+N/* stat structure */
+N#include <stdint.h>
+L 1 "D:\Software\Keil\ARM\ARMCC\Bin\..\include\stdint.h" 1
+N/* Copyright (C) ARM Ltd., 1999,2014 */
+N/* All rights reserved */
+N
+N/*
+N * RCS $Revision$
+N * Checkin $Date$
+N * Revising $Author: agrant $
+N */
+N
+N#ifndef __stdint_h
+N#define __stdint_h
+N#define __ARMCLIB_VERSION 5060044
+N
+N  #ifdef __INT64_TYPE__
+S    /* armclang predefines '__INT64_TYPE__' and '__INT64_C_SUFFIX__' */
+S    #define __INT64 __INT64_TYPE__
+N  #else
+N    /* armcc has builtin '__int64' which can be used in --strict mode */
+N    #define __INT64 __int64
+N    #define __INT64_C_SUFFIX__ ll
+N  #endif
+N  #define __PASTE2(x, y) x ## y
+N  #define __PASTE(x, y) __PASTE2(x, y)
+N  #define __INT64_C(x)  __ESCAPE__(__PASTE(x, __INT64_C_SUFFIX__))
+N  #define __UINT64_C(x)  __ESCAPE__(__PASTE(x ## u, __INT64_C_SUFFIX__))
+N  #if defined(__clang__) || (defined(__ARMCC_VERSION) && !defined(__STRICT_ANSI__))
+X  #if 0L || (1L && !0L)
+N    /* armclang and non-strict armcc allow 'long long' in system headers */
+N    #define __LONGLONG long long
+N  #else
+S    /* strict armcc has '__int64' */
+S    #define __LONGLONG __int64
+N  #endif
+N
+N  #ifndef __STDINT_DECLS
+N  #define __STDINT_DECLS
+N
+N    #undef __CLIBNS
+N
+N    #ifdef __cplusplus
+S      namespace std {
+S          #define __CLIBNS std::
+S          extern "C" {
+N    #else
+N      #define __CLIBNS
+N    #endif  /* __cplusplus */
+N
+N
+N/*
+N * 'signed' is redundant below, except for 'signed char' and if
+N * the typedef is used to declare a bitfield.
+N */
+N
+N    /* 7.18.1.1 */
+N
+N    /* exact-width signed integer types */
+Ntypedef   signed          char int8_t;
+Ntypedef   signed short     int int16_t;
+Ntypedef   signed           int int32_t;
+Ntypedef   signed       __INT64 int64_t;
+Xtypedef   signed       __int64 int64_t;
+N
+N    /* exact-width unsigned integer types */
+Ntypedef unsigned          char uint8_t;
+Ntypedef unsigned short     int uint16_t;
+Ntypedef unsigned           int uint32_t;
+Ntypedef unsigned       __INT64 uint64_t;
+Xtypedef unsigned       __int64 uint64_t;
+N
+N    /* 7.18.1.2 */
+N
+N    /* smallest type of at least n bits */
+N    /* minimum-width signed integer types */
+Ntypedef   signed          char int_least8_t;
+Ntypedef   signed short     int int_least16_t;
+Ntypedef   signed           int int_least32_t;
+Ntypedef   signed       __INT64 int_least64_t;
+Xtypedef   signed       __int64 int_least64_t;
+N
+N    /* minimum-width unsigned integer types */
+Ntypedef unsigned          char uint_least8_t;
+Ntypedef unsigned short     int uint_least16_t;
+Ntypedef unsigned           int uint_least32_t;
+Ntypedef unsigned       __INT64 uint_least64_t;
+Xtypedef unsigned       __int64 uint_least64_t;
+N
+N    /* 7.18.1.3 */
+N
+N    /* fastest minimum-width signed integer types */
+Ntypedef   signed           int int_fast8_t;
+Ntypedef   signed           int int_fast16_t;
+Ntypedef   signed           int int_fast32_t;
+Ntypedef   signed       __INT64 int_fast64_t;
+Xtypedef   signed       __int64 int_fast64_t;
+N
+N    /* fastest minimum-width unsigned integer types */
+Ntypedef unsigned           int uint_fast8_t;
+Ntypedef unsigned           int uint_fast16_t;
+Ntypedef unsigned           int uint_fast32_t;
+Ntypedef unsigned       __INT64 uint_fast64_t;
+Xtypedef unsigned       __int64 uint_fast64_t;
+N
+N    /* 7.18.1.4 integer types capable of holding object pointers */
+N#if __sizeof_ptr == 8
+X#if 4 == 8
+Stypedef   signed       __INT64 intptr_t;
+Stypedef unsigned       __INT64 uintptr_t;
+N#else
+Ntypedef   signed           int intptr_t;
+Ntypedef unsigned           int uintptr_t;
+N#endif
+N
+N    /* 7.18.1.5 greatest-width integer types */
+Ntypedef   signed     __LONGLONG intmax_t;
+Xtypedef   signed     long long intmax_t;
+Ntypedef unsigned     __LONGLONG uintmax_t;
+Xtypedef unsigned     long long uintmax_t;
+N
+N
+N#if !defined(__cplusplus) || defined(__STDC_LIMIT_MACROS)
+X#if !0L || 0L
+N
+N    /* 7.18.2.1 */
+N
+N    /* minimum values of exact-width signed integer types */
+N#define INT8_MIN                   -128
+N#define INT16_MIN                -32768
+N#define INT32_MIN          (~0x7fffffff)   /* -2147483648 is unsigned */
+N#define INT64_MIN  __INT64_C(~0x7fffffffffffffff) /* -9223372036854775808 is unsigned */
+N
+N    /* maximum values of exact-width signed integer types */
+N#define INT8_MAX                    127
+N#define INT16_MAX                 32767
+N#define INT32_MAX            2147483647
+N#define INT64_MAX  __INT64_C(9223372036854775807)
+N
+N    /* maximum values of exact-width unsigned integer types */
+N#define UINT8_MAX                   255
+N#define UINT16_MAX                65535
+N#define UINT32_MAX           4294967295u
+N#define UINT64_MAX __UINT64_C(18446744073709551615)
+N
+N    /* 7.18.2.2 */
+N
+N    /* minimum values of minimum-width signed integer types */
+N#define INT_LEAST8_MIN                   -128
+N#define INT_LEAST16_MIN                -32768
+N#define INT_LEAST32_MIN          (~0x7fffffff)
+N#define INT_LEAST64_MIN  __INT64_C(~0x7fffffffffffffff)
+N
+N    /* maximum values of minimum-width signed integer types */
+N#define INT_LEAST8_MAX                    127
+N#define INT_LEAST16_MAX                 32767
+N#define INT_LEAST32_MAX            2147483647
+N#define INT_LEAST64_MAX  __INT64_C(9223372036854775807)
+N
+N    /* maximum values of minimum-width unsigned integer types */
+N#define UINT_LEAST8_MAX                   255
+N#define UINT_LEAST16_MAX                65535
+N#define UINT_LEAST32_MAX           4294967295u
+N#define UINT_LEAST64_MAX __UINT64_C(18446744073709551615)
+N
+N    /* 7.18.2.3 */
+N
+N    /* minimum values of fastest minimum-width signed integer types */
+N#define INT_FAST8_MIN           (~0x7fffffff)
+N#define INT_FAST16_MIN          (~0x7fffffff)
+N#define INT_FAST32_MIN          (~0x7fffffff)
+N#define INT_FAST64_MIN  __INT64_C(~0x7fffffffffffffff)
+N
+N    /* maximum values of fastest minimum-width signed integer types */
+N#define INT_FAST8_MAX             2147483647
+N#define INT_FAST16_MAX            2147483647
+N#define INT_FAST32_MAX            2147483647
+N#define INT_FAST64_MAX  __INT64_C(9223372036854775807)
+N
+N    /* maximum values of fastest minimum-width unsigned integer types */
+N#define UINT_FAST8_MAX            4294967295u
+N#define UINT_FAST16_MAX           4294967295u
+N#define UINT_FAST32_MAX           4294967295u
+N#define UINT_FAST64_MAX __UINT64_C(18446744073709551615)
+N
+N    /* 7.18.2.4 */
+N
+N    /* minimum value of pointer-holding signed integer type */
+N#if __sizeof_ptr == 8
+X#if 4 == 8
+S#define INTPTR_MIN INT64_MIN
+N#else
+N#define INTPTR_MIN INT32_MIN
+N#endif
+N
+N    /* maximum value of pointer-holding signed integer type */
+N#if __sizeof_ptr == 8
+X#if 4 == 8
+S#define INTPTR_MAX INT64_MAX
+N#else
+N#define INTPTR_MAX INT32_MAX
+N#endif
+N
+N    /* maximum value of pointer-holding unsigned integer type */
+N#if __sizeof_ptr == 8
+X#if 4 == 8
+S#define UINTPTR_MAX UINT64_MAX
+N#else
+N#define UINTPTR_MAX UINT32_MAX
+N#endif
+N
+N    /* 7.18.2.5 */
+N
+N    /* minimum value of greatest-width signed integer type */
+N#define INTMAX_MIN  __ESCAPE__(~0x7fffffffffffffffll)
+N
+N    /* maximum value of greatest-width signed integer type */
+N#define INTMAX_MAX  __ESCAPE__(9223372036854775807ll)
+N
+N    /* maximum value of greatest-width unsigned integer type */
+N#define UINTMAX_MAX __ESCAPE__(18446744073709551615ull)
+N
+N    /* 7.18.3 */
+N
+N    /* limits of ptrdiff_t */
+N#if __sizeof_ptr == 8
+X#if 4 == 8
+S#define PTRDIFF_MIN INT64_MIN
+S#define PTRDIFF_MAX INT64_MAX
+N#else
+N#define PTRDIFF_MIN INT32_MIN
+N#define PTRDIFF_MAX INT32_MAX
+N#endif
+N
+N    /* limits of sig_atomic_t */
+N#define SIG_ATOMIC_MIN (~0x7fffffff)
+N#define SIG_ATOMIC_MAX   2147483647
+N
+N    /* limit of size_t */
+N#if __sizeof_ptr == 8
+X#if 4 == 8
+S#define SIZE_MAX UINT64_MAX
+N#else
+N#define SIZE_MAX UINT32_MAX
+N#endif
+N
+N    /* limits of wchar_t */
+N    /* NB we have to undef and redef because they're defined in both
+N     * stdint.h and wchar.h */
+N#undef WCHAR_MIN
+N#undef WCHAR_MAX
+N
+N#if defined(__WCHAR32) || (defined(__ARM_SIZEOF_WCHAR_T) && __ARM_SIZEOF_WCHAR_T == 4)
+X#if 0L || (0L && __ARM_SIZEOF_WCHAR_T == 4)
+S  #define WCHAR_MIN   0
+S  #define WCHAR_MAX   0xffffffffU
+N#else
+N  #define WCHAR_MIN   0
+N  #define WCHAR_MAX   65535
+N#endif
+N
+N    /* limits of wint_t */
+N#define WINT_MIN (~0x7fffffff)
+N#define WINT_MAX 2147483647
+N
+N#endif /* __STDC_LIMIT_MACROS */
+N
+N#if !defined(__cplusplus) || defined(__STDC_CONSTANT_MACROS)
+X#if !0L || 0L
+N
+N    /* 7.18.4.1 macros for minimum-width integer constants */
+N#define INT8_C(x)   (x)
+N#define INT16_C(x)  (x)
+N#define INT32_C(x)  (x)
+N#define INT64_C(x)  __INT64_C(x)
+N
+N#define UINT8_C(x)  (x ## u)
+N#define UINT16_C(x) (x ## u)
+N#define UINT32_C(x) (x ## u)
+N#define UINT64_C(x) __UINT64_C(x)
+N
+N    /* 7.18.4.2 macros for greatest-width integer constants */
+N#define INTMAX_C(x)  __ESCAPE__(x ## ll)
+N#define UINTMAX_C(x) __ESCAPE__(x ## ull)
+N
+N#endif /* __STDC_CONSTANT_MACROS */
+N
+N    #ifdef __cplusplus
+S         }  /* extern "C" */
+S      }  /* namespace std */
+N    #endif /* __cplusplus */
+N  #endif /* __STDINT_DECLS */
+N
+N  #ifdef __cplusplus
+S    #ifndef __STDINT_NO_EXPORTS
+S      using ::std::int8_t;
+S      using ::std::int16_t;
+S      using ::std::int32_t;
+S      using ::std::int64_t;
+S      using ::std::uint8_t;
+S      using ::std::uint16_t;
+S      using ::std::uint32_t;
+S      using ::std::uint64_t;
+S      using ::std::int_least8_t;
+S      using ::std::int_least16_t;
+S      using ::std::int_least32_t;
+S      using ::std::int_least64_t;
+S      using ::std::uint_least8_t;
+S      using ::std::uint_least16_t;
+S      using ::std::uint_least32_t;
+S      using ::std::uint_least64_t;
+S      using ::std::int_fast8_t;
+S      using ::std::int_fast16_t;
+S      using ::std::int_fast32_t;
+S      using ::std::int_fast64_t;
+S      using ::std::uint_fast8_t;
+S      using ::std::uint_fast16_t;
+S      using ::std::uint_fast32_t;
+S      using ::std::uint_fast64_t;
+S      using ::std::intptr_t;
+S      using ::std::uintptr_t;
+S      using ::std::intmax_t;
+S      using ::std::uintmax_t;
+S    #endif
+N  #endif /* __cplusplus */
+N
+N#undef __INT64
+N#undef __LONGLONG
+N
+N#endif /* __stdint_h */
+N
+N/* end of stdint.h */
+L 76 "..\rtthread\include\libc/libc_stat.h" 2
+N#include <time.h>
+L 1 "D:\Software\Keil\ARM\ARMCC\Bin\..\include\time.h" 1
+N/* time.h: ANSI 'C' (X3J11 Oct 88) library header, section 4.12 */
+N/* Copyright (C) Codemist Ltd., 1988-1993.                      */
+N/* Copyright 1991-1993 ARM Limited. All rights reserved.        */
+N/* version 0.03 */
+N
+N/*
+N * time.h declares two macros, four types and several functions for
+N * manipulating time. Many functions deal with a calendar time that
+N * represents the current date (according to the Gregorian
+N * calendar) and time. Some functions deal with local time, which
+N * is the calendar time expressed for some specific time zone, and
+N * with Daylight Savings Time, which is a temporary change in the
+N * algorithm for determining local time.
+N */
+N
+N/*
+N * RCS $Revision$
+N * Checkin $Date$
+N * Revising $Author: drodgman $
+N */
+N
+N#ifndef __time_h
+N#define __time_h
+N#define __ARMCLIB_VERSION 5060044
+N
+N#define _ARMABI __declspec(__nothrow)
+N#define _ARMABI_PURE __declspec(__nothrow) __attribute__((const))
+N
+N  #ifndef __TIME_DECLS
+N  #define __TIME_DECLS
+N
+N    #undef __CLIBNS
+N
+N    #ifdef __cplusplus
+S      namespace std {
+S          #define __CLIBNS std::
+S          extern "C" {
+N    #else
+N      #define __CLIBNS
+N    #endif  /* __cplusplus */
+N
+N#if defined(__cplusplus) || !defined(__STRICT_ANSI__)
+X#if 0L || !0L
+N /* unconditional in C++ and non-strict C for consistency of debug info */
+N  #if __sizeof_ptr == 8
+X  #if 4 == 8
+S    typedef unsigned long size_t;   /* see <stddef.h> */
+N  #else
+N    typedef unsigned int size_t;   /* see <stddef.h> */
+N  #endif
+N#elif !defined(__size_t)
+X#elif !0L
+S  #define __size_t 1
+S  #if __sizeof_ptr == 8
+S    typedef unsigned long size_t;   /* see <stddef.h> */
+S  #else
+S    typedef unsigned int size_t;   /* see <stddef.h> */
+S  #endif
+N#endif
+N
+N#undef NULL
+N#define NULL 0                   /* see <stddef.h> */
+N
+N    /* CLOCKS_PER_SEC: the number per second of the value returned by the
+N     * clock function. */
+N#if _AEABI_PORTABILITY_LEVEL != 0 || (!defined _AEABI_PORTABILITY_LEVEL && __DEFAULT_AEABI_PORTABILITY_LEVEL != 0)
+X#if _AEABI_PORTABILITY_LEVEL != 0 || (!0L && __DEFAULT_AEABI_PORTABILITY_LEVEL != 0)
+S  extern const int __aeabi_CLOCKS_PER_SEC;
+S  #define CLOCKS_PER_SEC (__aeabi_CLOCKS_PER_SEC)
+N#else
+N  #ifdef __CLK_TCK
+S    #define CLOCKS_PER_SEC  __CLK_TCK
+N  #else
+N    #define CLOCKS_PER_SEC  100
+N  #endif
+N#endif
+N
+N#ifndef __STRICT_ANSI__
+N  #define CLK_TCK CLOCKS_PER_SEC
+N#endif
+N
+Ntypedef unsigned int clock_t;    /* cpu time type */
+Ntypedef unsigned int time_t;     /* date/time in unix secs past 1-Jan-70 */
+N
+N#pragma push
+N#pragma anon_unions
+N
+Nstruct tm {
+N    int tm_sec;   /* seconds after the minute, 0 to 60
+N                     (0 - 60 allows for the occasional leap second) */
+N    int tm_min;   /* minutes after the hour, 0 to 59 */
+N    int tm_hour;  /* hours since midnight, 0 to 23 */
+N    int tm_mday;  /* day of the month, 1 to 31 */
+N    int tm_mon;   /* months since January, 0 to 11 */
+N    int tm_year;  /* years since 1900 */
+N    int tm_wday;  /* days since Sunday, 0 to 6 */
+N    int tm_yday;  /* days since January 1, 0 to 365 */
+N    int tm_isdst; /* Daylight Savings Time flag */
+N    union {       /* ABI-required extra fields, in a variety of types */
+N        struct {
+N            int __extra_1, __extra_2;
+N        };
+N        struct {
+N            long __extra_1_long, __extra_2_long;
+N        };
+N        struct {
+N            char *__extra_1_cptr, *__extra_2_cptr;
+N        };
+N        struct {
+N            void *__extra_1_vptr, *__extra_2_vptr;
+N        };
+N    };
+N};
+N
+N#pragma pop
+N
+N   /* struct tm holds the components of a calendar time, called the broken-down
+N    * time. The value of tm_isdst is positive if Daylight Savings Time is in
+N    * effect, zero if Daylight Savings Time is not in effect, and negative if
+N    * the information is not available.
+N    */
+N
+Nextern _ARMABI clock_t clock(void);
+Xextern __declspec(__nothrow) clock_t clock(void);
+N   /* determines the processor time used.
+N    * Returns: the implementation's best approximation to the processor time
+N    *          used by the program since program invocation. The time in
+N    *          seconds is the value returned divided by the value of the macro
+N    *          CLK_TCK. The value (clock_t)-1 is returned if the processor time
+N    *          used is not available.
+N    */
+Nextern _ARMABI double difftime(time_t /*time1*/, time_t /*time0*/);
+Xextern __declspec(__nothrow) double difftime(time_t  , time_t  );
+N   /*
+N    * computes the difference between two calendar times: time1 - time0.
+N    * Returns: the difference expressed in seconds as a double.
+N    */
+Nextern _ARMABI time_t mktime(struct tm * /*timeptr*/) __attribute__((__nonnull__(1)));
+Xextern __declspec(__nothrow) time_t mktime(struct tm *  ) __attribute__((__nonnull__(1)));
+N   /*
+N    * converts the broken-down time, expressed as local time, in the structure
+N    * pointed to by timeptr into a calendar time value with the same encoding
+N    * as that of the values returned by the time function. The original values
+N    * of the tm_wday and tm_yday components of the structure are ignored, and
+N    * the original values of the other components are not restricted to the
+N    * ranges indicated above. On successful completion, the values of the
+N    * tm_wday and tm_yday structure components are set appropriately, and the
+N    * other components are set to represent the specified calendar time, but
+N    * with their values forced to the ranges indicated above; the final value
+N    * of tm_mday is not set until tm_mon and tm_year are determined.
+N    * Returns: the specified calendar time encoded as a value of type time_t.
+N    *          If the calendar time cannot be represented, the function returns
+N    *          the value (time_t)-1.
+N    */
+Nextern _ARMABI time_t time(time_t * /*timer*/);
+Xextern __declspec(__nothrow) time_t time(time_t *  );
+N   /*
+N    * determines the current calendar time. The encoding of the value is
+N    * unspecified.
+N    * Returns: the implementations best approximation to the current calendar
+N    *          time. The value (time_t)-1 is returned if the calendar time is
+N    *          not available. If timer is not a null pointer, the return value
+N    *          is also assigned to the object it points to.
+N    */
+N
+Nextern _ARMABI char *asctime(const struct tm * /*timeptr*/) __attribute__((__nonnull__(1)));
+Xextern __declspec(__nothrow) char *asctime(const struct tm *  ) __attribute__((__nonnull__(1)));
+Nextern _ARMABI char *_asctime_r(const struct tm * /*timeptr*/,
+Xextern __declspec(__nothrow) char *_asctime_r(const struct tm *  ,
+N                                char * __restrict /*buf*/) __attribute__((__nonnull__(1,2)));
+N#ifndef __STRICT_ANSI__
+Nextern _ARMABI char *asctime_r(const struct tm * /*timeptr*/,
+Xextern __declspec(__nothrow) char *asctime_r(const struct tm *  ,
+N                               char * __restrict /*buf*/) __attribute__((__nonnull__(1,2)));
+N#endif
+N   /*
+N    * converts the broken-down time in the structure pointed to by timeptr into
+N    * a string in the form "Sun Sep 16 01:03:52 1973\n\0".
+N    * Returns: a pointer to the string containing the date and time.
+N    */
+Nextern _ARMABI char *ctime(const time_t * /*timer*/) __attribute__((__nonnull__(1)));
+Xextern __declspec(__nothrow) char *ctime(const time_t *  ) __attribute__((__nonnull__(1)));
+N   /*
+N    * converts the calendar time pointed to by timer to local time in the form
+N    * of a string. It is equivalent to asctime(localtime(timer));
+N    * Returns: the pointer returned by the asctime function with that
+N    *          broken-down time as argument.
+N    */
+Nextern _ARMABI struct tm *gmtime(const time_t * /*timer*/) __attribute__((__nonnull__(1)));
+Xextern __declspec(__nothrow) struct tm *gmtime(const time_t *  ) __attribute__((__nonnull__(1)));
+N   /*
+N    * converts the calendar time pointed to by timer into a broken-down time,
+N    * expressed as Greenwich Mean Time (GMT).
+N    * Returns: a pointer to that object or a null pointer if GMT not available.
+N    */
+Nextern _ARMABI struct tm *localtime(const time_t * /*timer*/) __attribute__((__nonnull__(1)));
+Xextern __declspec(__nothrow) struct tm *localtime(const time_t *  ) __attribute__((__nonnull__(1)));
+Nextern _ARMABI struct tm *_localtime_r(const time_t * __restrict /*timer*/,
+Xextern __declspec(__nothrow) struct tm *_localtime_r(const time_t * __restrict  ,
+N                                       struct tm * __restrict /*result*/) __attribute__((__nonnull__(1,2)));
+N#ifndef __STRICT_ANSI__
+Nextern _ARMABI struct tm *localtime_r(const time_t * __restrict /*timer*/,
+Xextern __declspec(__nothrow) struct tm *localtime_r(const time_t * __restrict  ,
+N                                      struct tm * __restrict /*result*/) __attribute__((__nonnull__(1,2)));
+N#endif
+N   /*
+N    * converts the calendar time pointed to by timer into a broken-down time,
+N    * expressed a local time.
+N    * Returns: a pointer to that object.
+N    */
+Nextern _ARMABI size_t strftime(char * __restrict /*s*/, size_t /*maxsize*/,
+Xextern __declspec(__nothrow) size_t strftime(char * __restrict  , size_t  ,
+N                       const char * __restrict /*format*/,
+N                       const struct tm * __restrict /*timeptr*/) __attribute__((__nonnull__(1,3,4)));
+N   /*
+N    * places characters into the array pointed to by s as controlled by the
+N    * string pointed to by format. The format string consists of zero or more
+N    * directives and ordinary characters. A directive consists of a % character
+N    * followed by a character that determines the directive's behaviour. All
+N    * ordinary characters (including the terminating null character) are copied
+N    * unchanged into the array. No more than maxsize characters are placed into
+N    * the array. Each directive is replaced by appropriate characters  as
+N    * described in the following list. The appropriate characters are
+N    * determined by the LC_TIME category of the current locale and by the
+N    * values contained in the structure pointed to by timeptr.
+N    * %a is replaced by the locale's abbreviated weekday name.
+N    * %A is replaced by the locale's full weekday name.
+N    * %b is replaced by the locale's abbreviated month name.
+N    * %B is replaced by the locale's full month name.
+N    * %c is replaced by the locale's appropriate date and time representation.
+N    * %d is replaced by the day of the month as a decimal number (01-31).
+N    * %H is replaced by the hour (24-hour clock) as a decimal number (00-23).
+N    * %I is replaced by the hour (12-hour clock) as a decimal number (01-12).
+N    * %j is replaced by the day of the year as a decimal number (001-366).
+N    * %m is replaced by the month as a decimal number (01-12).
+N    * %M is replaced by the minute as a decimal number (00-59).
+N    * %p is replaced by the locale's equivalent of either AM or PM designations
+N    *       associated with a 12-hour clock.
+N    * %S is replaced by the second as a decimal number (00-61).
+N    * %U is replaced by the week number of the year (Sunday as the first day of
+N    *       week 1) as a decimal number (00-53).
+N    * %w is replaced by the weekday as a decimal number (0(Sunday) - 6).
+N    * %W is replaced by the week number of the year (Monday as the first day of
+N    *       week 1) as a decimal number (00-53).
+N    * %x is replaced by the locale's appropriate date representation.
+N    * %X is replaced by the locale's appropriate time representation.
+N    * %y is replaced by the year without century as a decimal number (00-99).
+N    * %Y is replaced by the year with century as a decimal number.
+N    * %Z is replaced by the timezone name or abbreviation, or by no characters
+N    *       if no time zone is determinable.
+N    * %% is replaced by %.
+N    * If a directive is not one of the above, the behaviour is undefined.
+N    * Returns: If the total number of resulting characters including the
+N    *          terminating null character is not more than maxsize, the
+N    *          strftime function returns the number of characters placed into
+N    *          the array pointed to by s not including the terminating null
+N    *          character. otherwise, zero is returned and the contents of the
+N    *          array are indeterminate.
+N    */
+N
+N    #ifdef __cplusplus
+S         }  /* extern "C" */
+S      }  /* namespace std */
+N    #endif /* __cplusplus */
+N  #endif /* __TIME_DECLS */
+N
+N  #if _AEABI_PORTABILITY_LEVEL != 0 && !defined _AEABI_PORTABLE
+X  #if _AEABI_PORTABILITY_LEVEL != 0 && !0L
+S    #define _AEABI_PORTABLE
+N  #endif
+N
+N  #ifdef __cplusplus
+S    #ifndef __TIME_NO_EXPORTS
+S      using ::std::clock_t;
+S      using ::std::time_t;
+S      using ::std::tm;
+S      using ::std::tm;
+S      using ::std::clock;
+S      using ::std::difftime;
+S      using ::std::mktime;
+S      using ::std::time;
+S      using ::std::asctime;
+S      using ::std::_asctime_r;
+S#ifndef __STRICT_ANSI__
+S      using ::std::asctime_r;
+S#endif
+S      using ::std::ctime;
+S      using ::std::gmtime;
+S      using ::std::localtime;
+S      using ::std::_localtime_r;
+S#ifndef __STRICT_ANSI__
+S      using ::std::localtime_r;
+S#endif
+S      using ::std::strftime;
+S      using ::std::size_t;
+S    #endif /* __TIME_NO_EXPORTS */
+N  #endif /* __cplusplus */
+N
+N#endif
+N
+N/* end of time.h */
+N
+L 77 "..\rtthread\include\libc/libc_stat.h" 2
+N
+Nstruct stat
+N{
+N    struct rt_device* st_dev;
+N    uint16_t st_mode;
+N    uint32_t st_size;
+N    time_t   st_mtime;
+N    uint32_t st_blksize;
+N};
+N
+N#endif
+N
+N#endif
+L 30 "..\rtthread\include\rtlibc.h" 2
+N#include "libc/libc_errno.h"
+L 1 "..\rtthread\include\libc/libc_errno.h" 1
+N/*
+N * File      : libc_errno.h
+N * This file is part of RT-Thread RTOS
+N * COPYRIGHT (C) 2017, RT-Thread Development Team
+N *
+N *  This program is free software; you can redistribute it and/or modify
+N *  it under the terms of the GNU General Public License as published by
+N *  the Free Software Foundation; either version 2 of the License, or
+N *  (at your option) any later version.
+N *
+N *  This program is distributed in the hope that it will be useful,
+N *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+N *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+N *  GNU General Public License for more details.
+N *
+N *  You should have received a copy of the GNU General Public License along
+N *  with this program; if not, write to the Free Software Foundation, Inc.,
+N *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+N *
+N * Change Logs:
+N * Date           Author       Notes
+N * 2016-11-12     Bernard      The first version
+N */
+N
+N#ifndef LIBC_ERRNO_H__
+N#define LIBC_ERRNO_H__
+N
+N#include <rtconfig.h>
+N
+N#if defined(RT_USING_NEWLIB) || defined(_WIN32)
+X#if 0L || 0L
+S/* use errno.h file in newlib */
+S#include <errno.h>
+N#else
+N/* define errno self. */
+N#define EPERM            1
+N#define ENOENT           2
+N#define ESRCH            3
+N#define EINTR            4
+N#define EIO              5
+N#define ENXIO            6
+N#define E2BIG            7
+N#define ENOEXEC          8
+N#define EBADF            9
+N#define ECHILD          10
+N#define EAGAIN          11
+N#define ENOMEM          12
+N#define EACCES          13
+N#define EFAULT          14
+N#define ENOTBLK         15
+N#define EBUSY           16
+N#define EEXIST          17
+N#define EXDEV           18
+N#define ENODEV          19
+N#define ENOTDIR         20
+N#define EISDIR          21
+N#define EINVAL          22
+N#define ENFILE          23
+N#define EMFILE          24
+N#define ENOTTY          25
+N#define ETXTBSY         26
+N#define EFBIG           27
+N#define ENOSPC          28
+N#define ESPIPE          29
+N#define EROFS           30
+N#define EMLINK          31
+N#define EPIPE           32
+N#define EDOM            33
+N#define ERANGE          34
+N#define EDEADLK         35
+N#define ENAMETOOLONG    36
+N#define ENOLCK          37
+N#define ENOSYS          38
+N#define ENOTEMPTY       39
+N#define ELOOP           40
+N#define EWOULDBLOCK     EAGAIN
+N#define ENOMSG          42
+N#define EIDRM           43
+N#define ECHRNG          44
+N#define EL2NSYNC        45
+N#define EL3HLT          46
+N#define EL3RST          47
+N#define ELNRNG          48
+N#define EUNATCH         49
+N#define ENOCSI          50
+N#define EL2HLT          51
+N#define EBADE           52
+N#define EBADR           53
+N#define EXFULL          54
+N#define ENOANO          55
+N#define EBADRQC         56
+N#define EBADSLT         57
+N#define EDEADLOCK       EDEADLK
+N#define EBFONT          59
+N#define ENOSTR          60
+N#define ENODATA         61
+N#define ETIME           62
+N#define ENOSR           63
+N#define ENONET          64
+N#define ENOPKG          65
+N#define EREMOTE         66
+N#define ENOLINK         67
+N#define EADV            68
+N#define ESRMNT          69
+N#define ECOMM           70
+N#define EPROTO          71
+N#define EMULTIHOP       72
+N#define EDOTDOT         73
+N#define EBADMSG         74
+N#define EOVERFLOW       75
+N#define ENOTUNIQ        76
+N#define EBADFD          77
+N#define EREMCHG         78
+N#define ELIBACC         79
+N#define ELIBBAD         80
+N#define ELIBSCN         81
+N#define ELIBMAX         82
+N#define ELIBEXEC        83
+N#define EILSEQ          84
+N#define ERESTART        85
+N#define ESTRPIPE        86
+N#define EUSERS          87
+N#define ENOTSOCK        88
+N#define EDESTADDRREQ    89
+N#define EMSGSIZE        90
+N#define EPROTOTYPE      91
+N#define ENOPROTOOPT     92
+N#define EPROTONOSUPPORT 93
+N#define ESOCKTNOSUPPORT 94
+N#define EOPNOTSUPP      95
+N#define ENOTSUP         EOPNOTSUPP
+N#define EPFNOSUPPORT    96
+N#define EAFNOSUPPORT    97
+N#define EADDRINUSE      98
+N#define EADDRNOTAVAIL   99
+N#define ENETDOWN        100
+N#define ENETUNREACH     101
+N#define ENETRESET       102
+N#define ECONNABORTED    103
+N#define ECONNRESET      104
+N#define ENOBUFS         105
+N#define EISCONN         106
+N#define ENOTCONN        107
+N#define ESHUTDOWN       108
+N#define ETOOMANYREFS    109
+N#define ETIMEDOUT       110
+N#define ECONNREFUSED    111
+N#define EHOSTDOWN       112
+N#define EHOSTUNREACH    113
+N#define EALREADY        114
+N#define EINPROGRESS     115
+N#define ESTALE          116
+N#define EUCLEAN         117
+N#define ENOTNAM         118
+N#define ENAVAIL         119
+N#define EISNAM          120
+N#define EREMOTEIO       121
+N#define EDQUOT          122
+N#define ENOMEDIUM       123
+N#define EMEDIUMTYPE     124
+N#define ECANCELED       125
+N#define ENOKEY          126
+N#define EKEYEXPIRED     127
+N#define EKEYREVOKED     128
+N#define EKEYREJECTED    129
+N#define EOWNERDEAD      130
+N#define ENOTRECOVERABLE 131
+N#define ERFKILL         132
+N#define EHWPOISON       133
+N#endif
+N
+N#endif
+L 31 "..\rtthread\include\rtlibc.h" 2
+N
+N#include "libc/libc_fcntl.h"
+L 1 "..\rtthread\include\libc/libc_fcntl.h" 1
+N/*
+N * File      : libc_fcntl.h
+N * This file is part of RT-Thread RTOS
+N * COPYRIGHT (C) 2017 - 2018, RT-Thread Development Team
+N *
+N *  This program is free software; you can redistribute it and/or modify
+N *  it under the terms of the GNU General Public License as published by
+N *  the Free Software Foundation; either version 2 of the License, or
+N *  (at your option) any later version.
+N *
+N *  This program is distributed in the hope that it will be useful,
+N *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+N *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+N *  GNU General Public License for more details.
+N *
+N *  You should have received a copy of the GNU General Public License along
+N *  with this program; if not, write to the Free Software Foundation, Inc.,
+N *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+N *
+N * Change Logs:
+N * Date           Author       Notes
+N * 2018-02-07     Bernard      Add O_DIRECTORY definition in NEWLIB mode.
+N * 2018-02-09     Bernard      Add O_BINARY definition
+N */
+N
+N#ifndef LIBC_FCNTL_H__
+N#define LIBC_FCNTL_H__
+N
+N#if defined(RT_USING_NEWLIB) || defined(_WIN32)
+X#if 0L || 0L
+S#include <fcntl.h>
+S
+S#ifndef O_NONBLOCK
+S#define O_NONBLOCK   0x4000
+S#endif
+S
+S#if defined(_WIN32)
+S#define O_ACCMODE   (_O_RDONLY | _O_WRONLY | _O_RDWR)
+S#endif
+S
+S#ifndef F_GETFL
+S#define F_GETFL  3
+S#endif
+S#ifndef F_SETFL
+S#define F_SETFL  4
+S#endif
+S
+S#ifndef O_DIRECTORY
+S#define O_DIRECTORY 0x200000
+S#endif
+S
+S#ifndef O_BINARY
+S#ifdef  _O_BINARY
+S#define O_BINARY _O_BINARY
+S#else
+S#define O_BINARY	     0
+S#endif
+S#endif
+S
+N#else
+N#define O_RDONLY         00
+N#define O_WRONLY         01
+N#define O_RDWR           02
+N
+N#define O_CREAT        0100
+N#define O_EXCL         0200
+N#define O_NOCTTY       0400
+N#define O_TRUNC       01000
+N#define O_APPEND      02000
+N#define O_NONBLOCK    04000
+N#define O_DSYNC      010000
+N#define O_SYNC     04010000
+N#define O_RSYNC    04010000
+N#define O_BINARY    0100000
+N#define O_DIRECTORY 0200000
+N#define O_NOFOLLOW  0400000
+N#define O_CLOEXEC  02000000
+N
+N#define O_ASYNC      020000
+N#define O_DIRECT     040000
+N#define O_LARGEFILE 0100000
+N#define O_NOATIME  01000000
+N#define O_PATH    010000000
+N#define O_TMPFILE 020200000
+N#define O_NDELAY O_NONBLOCK
+N
+N#define O_SEARCH  O_PATH
+N#define O_EXEC    O_PATH
+N
+N#define O_ACCMODE (03|O_SEARCH)
+N
+N#define F_DUPFD  0
+N#define F_GETFD  1
+N#define F_SETFD  2
+N#define F_GETFL  3
+N#define F_SETFL  4
+N
+N#define F_SETOWN 8
+N#define F_GETOWN 9
+N#define F_SETSIG 10
+N#define F_GETSIG 11
+N
+N#define F_GETLK 12
+N#define F_SETLK 13
+N#define F_SETLKW 14
+N
+N#define F_SETOWN_EX 15
+N#define F_GETOWN_EX 16
+N
+N#define F_GETOWNER_UIDS 17
+N#endif
+N
+N#endif
+L 33 "..\rtthread\include\rtlibc.h" 2
+N#include "libc/libc_ioctl.h"
+L 1 "..\rtthread\include\libc/libc_ioctl.h" 1
+N/*
+N * File      : libc_ioctl.h
+N * This file is part of RT-Thread RTOS
+N * COPYRIGHT (C) 2017, RT-Thread Development Team
+N *
+N *  This program is free software; you can redistribute it and/or modify
+N *  it under the terms of the GNU General Public License as published by
+N *  the Free Software Foundation; either version 2 of the License, or
+N *  (at your option) any later version.
+N *
+N *  This program is distributed in the hope that it will be useful,
+N *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+N *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+N *  GNU General Public License for more details.
+N *
+N *  You should have received a copy of the GNU General Public License along
+N *  with this program; if not, write to the Free Software Foundation, Inc.,
+N *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+N *
+N * Change Logs:
+N * Date           Author       Notes
+N * 2017-01-21     Bernard      the first version
+N */
+N
+N#ifndef LIBC_IOCTL_H__
+N#define LIBC_IOCTL_H__
+N
+N#define _IOC(a,b,c,d) ( ((a)<<30) | ((b)<<8) | (c) | ((d)<<16) )
+N#define _IOC_NONE  0U
+N#define _IOC_WRITE 1U
+N#define _IOC_READ  2U
+N
+N#ifndef _WIN32
+N#define _IO(a,b)    _IOC(_IOC_NONE,(a),(b),0)
+N#define _IOW(a,b,c) _IOC(_IOC_WRITE,(a),(b),sizeof(c))
+N#define _IOR(a,b,c) _IOC(_IOC_READ,(a),(b),sizeof(c))
+N#define _IOWR(a,b,c) _IOC(_IOC_READ|_IOC_WRITE,(a),(b),sizeof(c))
+N
+N#define FIONREAD    _IOR('f', 127, int) /* get # bytes to read */
+N#define FIONBIO     _IOW('f', 126, int) /* set/clear non-blocking i/o */
+N#define FIONWRITE   _IOR('f', 121, int) /* get # bytes outstanding
+N                         * in send queue. */
+N#endif
+N
+N#define TCGETS		0x5401
+N#define TCSETS		0x5402
+N#define TCSETSW		0x5403
+N#define TCSETSF		0x5404
+N#define TCGETA		0x5405
+N#define TCSETA		0x5406
+N#define TCSETAW		0x5407
+N#define TCSETAF		0x5408
+N#define TCSBRK		0x5409
+N#define TCXONC		0x540A
+N#define TCFLSH		0x540B
+N#define TIOCEXCL	0x540C
+N#define TIOCNXCL	0x540D
+N#define TIOCSCTTY	0x540E
+N#define TIOCGPGRP	0x540F
+N#define TIOCSPGRP	0x5410
+N#define TIOCOUTQ	0x5411
+N#define TIOCSTI		0x5412
+N#define TIOCGWINSZ	0x5413
+N#define TIOCSWINSZ	0x5414
+N#define TIOCMGET	0x5415
+N#define TIOCMBIS	0x5416
+N#define TIOCMBIC	0x5417
+N#define TIOCMSET	0x5418
+N#define TIOCGSOFTCAR	0x5419
+N#define TIOCSSOFTCAR	0x541A
+N// #define FIONREAD	0x541B
+N#define TIOCINQ		FIONREAD
+N#define TIOCLINUX	0x541C
+N#define TIOCCONS	0x541D
+N#define TIOCGSERIAL	0x541E
+N#define TIOCSSERIAL	0x541F
+N#define TIOCPKT		0x5420
+N// #define FIONBIO		0x5421
+N#define TIOCNOTTY	0x5422
+N#define TIOCSETD	0x5423
+N#define TIOCGETD	0x5424
+N#define TCSBRKP		0x5425
+N#define TIOCSBRK	0x5427
+N#define TIOCCBRK	0x5428
+N#define TIOCGSID	0x5429
+N#define TIOCGRS485	0x542E
+N#define TIOCSRS485	0x542F
+N#define TIOCGPTN	0x80045430
+N#define TIOCSPTLCK	0x40045431
+N#define TIOCGDEV	0x80045432
+N#define TCGETX		0x5432
+N#define TCSETX		0x5433
+N#define TCSETXF		0x5434
+N#define TCSETXW		0x5435
+N#define TIOCSIG		0x40045436
+N#define TIOCVHANGUP	0x5437
+N#define TIOCGPKT	0x80045438
+N#define TIOCGPTLCK	0x80045439
+N#define TIOCGEXCL	0x80045440
+N
+N#define FIONCLEX	0x5450
+N#define FIOCLEX		0x5451
+N
+N#ifndef _WIN32
+N#define FIOASYNC	0x5452
+N#endif
+N
+N#define TIOCSERCONFIG	0x5453
+N#define TIOCSERGWILD	0x5454
+N#define TIOCSERSWILD	0x5455
+N#define TIOCGLCKTRMIOS	0x5456
+N#define TIOCSLCKTRMIOS	0x5457
+N#define TIOCSERGSTRUCT	0x5458
+N#define TIOCSERGETLSR   0x5459
+N#define TIOCSERGETMULTI 0x545A
+N#define TIOCSERSETMULTI 0x545B
+N
+N#define TIOCMIWAIT	0x545C
+N#define TIOCGICOUNT	0x545D
+N#define FIOQSIZE	0x5460
+N
+N#define TIOCPKT_DATA		 0
+N#define TIOCPKT_FLUSHREAD	 1
+N#define TIOCPKT_FLUSHWRITE	 2
+N#define TIOCPKT_STOP		 4
+N#define TIOCPKT_START		 8
+N#define TIOCPKT_NOSTOP		16
+N#define TIOCPKT_DOSTOP		32
+N#define TIOCPKT_IOCTL		64
+N
+N#define TIOCSER_TEMT    0x01
+N
+Nstruct winsize {
+N	unsigned short ws_row;
+N	unsigned short ws_col;
+N	unsigned short ws_xpixel;
+N	unsigned short ws_ypixel;
+N};
+N
+N#define TIOCM_LE        0x001
+N#define TIOCM_DTR       0x002
+N#define TIOCM_RTS       0x004
+N#define TIOCM_ST        0x008
+N#define TIOCM_SR        0x010
+N#define TIOCM_CTS       0x020
+N#define TIOCM_CAR       0x040
+N#define TIOCM_RNG       0x080
+N#define TIOCM_DSR       0x100
+N#define TIOCM_CD        TIOCM_CAR
+N#define TIOCM_RI        TIOCM_RNG
+N#define TIOCM_OUT1      0x2000
+N#define TIOCM_OUT2      0x4000
+N#define TIOCM_LOOP      0x8000
+N
+N#define N_TTY           0
+N#define N_SLIP          1
+N#define N_MOUSE         2
+N#define N_PPP           3
+N#define N_STRIP         4
+N#define N_AX25          5
+N#define N_X25           6
+N#define N_6PACK         7
+N#define N_MASC          8
+N#define N_R3964         9
+N#define N_PROFIBUS_FDL  10
+N#define N_IRDA          11
+N#define N_SMSBLOCK      12
+N#define N_HDLC          13
+N#define N_SYNC_PPP      14
+N#define N_HCI           15
+N
+N#define FIOSETOWN       0x8901
+N#define SIOCSPGRP       0x8902
+N#define FIOGETOWN       0x8903
+N#define SIOCGPGRP       0x8904
+N// #define SIOCATMARK      0x8905
+N#define SIOCGSTAMP      0x8906
+N#define SIOCGSTAMPNS    0x8907
+N
+N#define SIOCADDRT       0x890B
+N#define SIOCDELRT       0x890C
+N#define SIOCRTMSG       0x890D
+N
+N#define SIOCGIFNAME     0x8910
+N#define SIOCSIFLINK     0x8911
+N#define SIOCGIFCONF     0x8912
+N#define SIOCGIFFLAGS    0x8913
+N#define SIOCSIFFLAGS    0x8914
+N#define SIOCGIFADDR     0x8915
+N#define SIOCSIFADDR     0x8916
+N#define SIOCGIFDSTADDR  0x8917
+N#define SIOCSIFDSTADDR  0x8918
+N#define SIOCGIFBRDADDR  0x8919
+N#define SIOCSIFBRDADDR  0x891a
+N#define SIOCGIFNETMASK  0x891b
+N#define SIOCSIFNETMASK  0x891c
+N#define SIOCGIFMETRIC   0x891d
+N#define SIOCSIFMETRIC   0x891e
+N#define SIOCGIFMEM      0x891f
+N#define SIOCSIFMEM      0x8920
+N#define SIOCGIFMTU      0x8921
+N#define SIOCSIFMTU      0x8922
+N#define SIOCSIFNAME     0x8923
+N#define SIOCSIFHWADDR   0x8924
+N#define SIOCGIFENCAP    0x8925
+N#define SIOCSIFENCAP    0x8926
+N#define SIOCGIFHWADDR   0x8927
+N#define SIOCGIFSLAVE    0x8929
+N#define SIOCSIFSLAVE    0x8930
+N#define SIOCADDMULTI    0x8931
+N#define SIOCDELMULTI    0x8932
+N#define SIOCGIFINDEX    0x8933
+N#define SIOGIFINDEX     SIOCGIFINDEX
+N#define SIOCSIFPFLAGS   0x8934
+N#define SIOCGIFPFLAGS   0x8935
+N#define SIOCDIFADDR     0x8936
+N#define SIOCSIFHWBROADCAST 0x8937
+N#define SIOCGIFCOUNT    0x8938
+N
+N#define SIOCGIFBR       0x8940
+N#define SIOCSIFBR       0x8941
+N
+N#define SIOCGIFTXQLEN   0x8942
+N#define SIOCSIFTXQLEN   0x8943
+N
+N#define SIOCDARP        0x8953
+N#define SIOCGARP        0x8954
+N#define SIOCSARP        0x8955
+N
+N#define SIOCDRARP       0x8960
+N#define SIOCGRARP       0x8961
+N#define SIOCSRARP       0x8962
+N
+N#define SIOCGIFMAP      0x8970
+N#define SIOCSIFMAP      0x8971
+N
+N#define SIOCADDDLCI     0x8980
+N#define SIOCDELDLCI     0x8981
+N
+N#define SIOCDEVPRIVATE		0x89F0
+N#define SIOCPROTOPRIVATE	0x89E0
+N
+N#endif
+N
+L 34 "..\rtthread\include\rtlibc.h" 2
+N#include "libc/libc_dirent.h"
+L 1 "..\rtthread\include\libc/libc_dirent.h" 1
+N#ifndef LIBC_DIRENT_H__
+N#define LIBC_DIRENT_H__
+N
+N#define DT_UNKNOWN           0x00
+N#define DT_REG               0x01
+N#define DT_DIR               0x02
+N
+N#endif
+L 35 "..\rtthread\include\rtlibc.h" 2
+N#include "libc/libc_signal.h"
+L 1 "..\rtthread\include\libc/libc_signal.h" 1
+N/*
+N * File      : libc_signal.h
+N * This file is part of RT-Thread RTOS
+N * COPYRIGHT (C) 2017, RT-Thread Development Team
+N *
+N *  This program is free software; you can redistribute it and/or modify
+N *  it under the terms of the GNU General Public License as published by
+N *  the Free Software Foundation; either version 2 of the License, or
+N *  (at your option) any later version.
+N *
+N *  This program is distributed in the hope that it will be useful,
+N *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+N *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+N *  GNU General Public License for more details.
+N *
+N *  You should have received a copy of the GNU General Public License along
+N *  with this program; if not, write to the Free Software Foundation, Inc.,
+N *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+N *
+N * Change Logs:
+N * Date           Author       Notes
+N * 2017-09-12     Bernard      The first version
+N */
+N
+N#ifndef LIBC_SIGNAL_H__
+N#define LIBC_SIGNAL_H__
+N
+N
+N#ifdef __cplusplus
+Sextern "C" {
+N#endif
+N
+N#ifndef HAVE_SYS_SIGNALS
+N/*  Signal Generation and Delivery, P1003.1b-1993, p. 63
+N    NOTE: P1003.1c/D10, p. 34 adds sigev_notify_function and
+N          sigev_notify_attributes to the sigevent structure.  */
+N
+Nunion sigval 
+N{
+N    int    sival_int;    /* Integer signal value */
+N    void  *sival_ptr;    /* Pointer signal value */
+N};
+N
+Nstruct sigevent
+N{
+N    int          sigev_notify;               /* Notification type */
+N    int          sigev_signo;                /* Signal number */
+N    union sigval sigev_value;                /* Signal value */
+N    void         (*sigev_notify_function)( union sigval );
+N                                             /* Notification function */
+N    void         *sigev_notify_attributes;   /* Notification Attributes, really pthread_attr_t */
+N};
+N
+Nstruct siginfo
+N{
+N    rt_uint8_t si_signo;
+N    rt_uint8_t si_code;
+N    rt_int16_t si_errno;
+N
+N    union sigval si_value;
+N};
+Ntypedef struct siginfo siginfo_t;
+N#endif
+N
+N#define SI_USER     0x01    /* Signal sent by kill(). */
+N#define SI_QUEUE    0x02    /* Signal sent by sigqueue(). */
+N#define SI_TIMER    0x03    /* Signal generated by expiration of a 
+N                               timer set by timer_settime(). */
+N#define SI_ASYNCIO  0x04    /* Signal generated by completion of an 
+N                               asynchronous I/O request. */
+N#define SI_MESGQ    0x05    /* Signal generated by arrival of a 
+N                               message on an empty message queue. */
+N
+N#ifdef RT_USING_NEWLIB
+S#include <sys/signal.h>
+N#endif
+N
+N#ifdef __CC_ARM
+N#include <signal.h>
+L 1 "D:\Software\Keil\ARM\ARMCC\Bin\..\include\signal.h" 1
+N/* signal.h
+N *
+N * Copyright (C) Codemist Ltd., 1988-1993.
+N * Copyright 1991-1999 ARM Limited. All rights reserved.
+N *
+N * RCS $Revision$
+N * Checkin $Date$
+N * Revising $Author: statham $
+N */
+N
+N/*
+N * signal.h declares a type and two functions and defines several macros, for
+N * handling various signals (conditions that may be reported during program
+N * execution).
+N */
+N
+N#ifndef __signal_h
+N#define __signal_h
+N#define __ARMCLIB_VERSION 5060044
+N
+N  #ifndef __SIGNAL_DECLS
+N  #define __SIGNAL_DECLS
+N
+N    #undef __CLIBNS
+N
+N    #ifdef __cplusplus
+S      namespace std {
+S          #define __CLIBNS std::
+S          extern "C" {
+N    #else
+N      #define __CLIBNS
+N    #endif  /* __cplusplus */
+N
+N
+Ntypedef int sig_atomic_t;
+N   /* type which is the integral type of an object that can be modified as */
+N   /* an atomic entity, even in the presence of asynchronous interrupts. */
+N
+N#if _AEABI_PORTABILITY_LEVEL != 0 && !defined _AEABI_PORTABLE
+X#if _AEABI_PORTABILITY_LEVEL != 0 && !0L
+S  #define _AEABI_PORTABLE
+N#endif
+N
+N#if _AEABI_PORTABILITY_LEVEL != 0 || (!defined _AEABI_PORTABILITY_LEVEL && __DEFAULT_AEABI_PORTABILITY_LEVEL != 0)
+X#if _AEABI_PORTABILITY_LEVEL != 0 || (!0L && __DEFAULT_AEABI_PORTABILITY_LEVEL != 0)
+S
+Sextern void __aeabi_SIG_DFL(int);
+S#define SIG_DFL (__CLIBNS __aeabi_SIG_DFL)
+Sextern void __aeabi_SIG_ERR(int);
+S#define SIG_ERR (__CLIBNS __aeabi_SIG_ERR)
+Sextern void __aeabi_SIG_IGN(int);
+S#define SIG_IGN (__CLIBNS __aeabi_SIG_IGN)
+S
+Sextern const int __aeabi_SIGABRT;
+S#define SIGABRT (__CLIBNS __aeabi_SIGABRT)
+Sextern const int __aeabi_SIGFPE;
+S#define SIGFPE (__CLIBNS __aeabi_SIGFPE)
+Sextern const int __aeabi_SIGILL;
+S#define SIGILL (__CLIBNS __aeabi_SIGILL)
+Sextern const int __aeabi_SIGINT;
+S#define SIGINT (__CLIBNS __aeabi_SIGINT)
+Sextern const int __aeabi_SIGSEGV;
+S#define SIGSEGV (__CLIBNS __aeabi_SIGSEGV)
+Sextern const int __aeabi_SIGTERM;
+S#define SIGTERM (__CLIBNS __aeabi_SIGTERM)
+S
+N#else
+N
+N   /*
+N    * Each of the following macros expand to a constant expression with a
+N    * distinct value and has the same type as the second argument to, and the
+N    * return value of the signal function, and whose value compares unequal to
+N    * the address of any declarable function.  Use a typedef to ensure that
+N    * the function pointer type is extern "C".
+N    */
+Ntypedef void(*__ARM_sigh_t)(int);
+N#define SIG_DFL ( (__CLIBNS __ARM_sigh_t) -1 )
+N#define SIG_ERR ( (__CLIBNS __ARM_sigh_t) -2 )
+N#define SIG_IGN ( (__CLIBNS __ARM_sigh_t) -3 )
+N
+N   /*
+N    * Each of the following macros expand to a positive integral constant
+N    * expression that is the signal number corresponding the the specified
+N    * condition.
+N    */
+N#define SIGABRT   1 /* abort                         */
+N#define SIGFPE    2 /* arithmetic exception          */
+N#define SIGILL    3 /* illegal instruction           */
+N#define SIGINT    4 /* attention request from user   */
+N#define SIGSEGV   5 /* bad memory access             */
+N#define SIGTERM   6 /* termination request           */
+N#endif
+N
+N   /* (these following macros are not part of the ANSI standard,
+N    * but private to this implementation)
+N    */
+N#define SIGSTAK   7  /* stack overflow                */
+N#define SIGRTRED  8  /* run-time redirection error    */
+N#define SIGRTMEM  9  /* run-time memory error         */
+N/* Signal numbers 10 and 11 are available for the user */
+N#define SIGUSR1  10
+N#define SIGUSR2  11
+N#define SIGPVFN  12 /* pure virtual function called   */
+N#define SIGCPPL  13 /* miscellaneous exception from C++ library */
+N#define SIGOUTOFHEAP 14 /* ::operator new or new[] cannot allocate memory */
+N/* Signal numbers 15-31 are reserved to the implementation */
+N/* Signal numbers 32 and larger are for more user signals */
+N
+Nextern void (*signal (int /*sig*/, void (* /*func*/ )(int)))(int) __attribute__((__nonnull__(2)));
+N   /*
+N    * Chooses one of three ways in which receipt of the signal number sig is to
+N    * be subsequently handled. If the value of func is SIG_DFL, default
+N    * handling for that signal will occur. If the value of func is SIG_IGN, the
+N    * signal will be ignored. Otherwise func shall point to a function to be
+N    * called when that signal occurs.
+N    * When a signal occurs, if func points to a function, first the
+N    * equivalent of signal(sig, SIG_DFL); is executed. (If the value of sig
+N    * is SIGILL, whether the reset to SIG_DFL occurs is implementation-
+N    * defined). Next the equivalent of (*func)(sig); is executed. The
+N    * function may terminate by calling the abort, exit or longjmp function.
+N    * If func executes a return statement and the value of sig was SIGFPE or
+N    * any other implementation-defined value corresponding to a computational
+N    * exception, the behaviour is undefined. Otherwise, the program will
+N    * resume execution at the point it was interrupted.
+N    * If the signal occurs other than as a result of calling the abort or raise
+N    * function, the behaviour is undefined if the signal handler calls any
+N    * function in the standard library other than the signal function itself
+N    * or refers to any object with static storage duration other than by
+N    * assigning a value to a volatile static variable of type sig_atomic_t.
+N    * At program startup, the equivalent of signal(sig, SIG_IGN); may be
+N    * executed for some signals selected in an implementation-defined manner;
+N    * the equivalent of signal(sig, SIG_DFL); is executed for all other
+N    * signals defined by the implementation.
+N    * Returns: If the request can be honoured, the signal function returns the
+N    *          value of func for most recent call to signal for the specified
+N    *          signal sig. Otherwise, a value of SIG_ERR is returned and the
+N    *          integer expression errno is set to indicate the error.
+N    */
+N
+Nextern int raise(int /*sig*/);
+N   /* sends the signal sig to the executing program. */
+N   /* Returns: zero if successful, non-zero if unsuccessful. */
+N
+N#define _DIVBYZERO 2                   /* SIGFPE param for integer div-by-0 */
+N#ifndef __STRICT_ANSI__
+N#define DIVBYZERO 2                    /* SIGFPE param for integer div-by-0 */
+N#endif
+N
+N    #ifdef __cplusplus
+S         }  /* extern "C" */
+S      }  /* namespace std */
+N    #endif /* __cplusplus */ 
+N  #endif /* __SIGNAL_DECLS */
+N
+N  #ifdef __cplusplus
+S    #ifndef __SIGNAL_NO_EXPORTS
+S      using ::std::sig_atomic_t;
+S      using ::std::raise;
+S      using ::std::signal;
+S    #endif 
+N  #endif /* __cplusplus */ 
+N
+N#endif
+N
+N/* end of signal.h */
+N
+L 80 "..\rtthread\include\libc/libc_signal.h" 2
+Ntypedef unsigned long sigset_t;
+N
+N#define SIGHUP       1
+N// #define SIGINT       2
+N#define SIGQUIT      3
+N// #define SIGILL       4
+N#define SIGTRAP      5
+N// #define SIGABRT      6
+N#define SIGEMT       7
+N// #define SIGFPE       8
+N#define SIGKILL      9
+N#define SIGBUS      10
+N// #define SIGSEGV     11
+N#define SIGSYS      12
+N#define SIGPIPE     13
+N#define SIGALRM     14
+N// #define SIGTERM     15
+N#define SIGURG      16
+N#define SIGSTOP     17
+N#define SIGTSTP     18
+N#define SIGCONT     19
+N#define SIGCHLD     20
+N#define SIGTTIN     21
+N#define SIGTTOU     22
+N#define SIGPOLL     23
+N#define SIGWINCH    24
+N// #define SIGUSR1     25
+N// #define SIGUSR2     26
+N#define SIGRTMIN    27
+N#define SIGRTMAX    31
+N#define NSIG        32
+N
+N#define SIG_SETMASK 0   /* set mask with sigprocmask() */
+N#define SIG_BLOCK   1   /* set of signals to block */
+N#define SIG_UNBLOCK 2   /* set of signals to, well, unblock */
+N
+Ntypedef void (*_sig_func_ptr)(int);
+N
+Nstruct sigaction 
+N{
+N    _sig_func_ptr sa_handler;
+N    sigset_t sa_mask;
+N    int sa_flags;
+N};
+N
+N#define sigaddset(what,sig) (*(what) |= (1<<(sig)), 0)
+N#define sigdelset(what,sig) (*(what) &= ~(1<<(sig)), 0)
+N#define sigemptyset(what)   (*(what) = 0, 0)
+N#define sigfillset(what)    (*(what) = ~(0), 0)
+N#define sigismember(what,sig) (((*(what)) & (1<<(sig))) != 0)
+N
+Nint sigprocmask (int how, const sigset_t *set, sigset_t *oset);
+Nint sigaction(int signum, const struct sigaction *act, struct sigaction *oldact);
+N
+N#elif defined(__IAR_SYSTEMS_ICC__)
+X#elif 0L
+S#include <signal.h>
+Stypedef unsigned long sigset_t;
+S
+S#define SIGHUP       1
+S#define SIGINT       2
+S#define SIGQUIT      3
+S#define SIGILL       4
+S#define SIGTRAP      5
+S// #define SIGABRT      6
+S#define SIGEMT       7
+S#define SIGFPE       8
+S#define SIGKILL      9
+S#define SIGBUS      10
+S#define SIGSEGV     11
+S#define SIGSYS      12
+S#define SIGPIPE     13
+S#define SIGALRM     14
+S#define SIGTERM     15
+S#define SIGURG      16
+S#define SIGSTOP     17
+S#define SIGTSTP     18
+S#define SIGCONT     19
+S#define SIGCHLD     20
+S#define SIGTTIN     21
+S#define SIGTTOU     22
+S#define SIGPOLL     23
+S#define SIGWINCH    24
+S#define SIGUSR1     25
+S#define SIGUSR2     26
+S#define SIGRTMIN    27
+S#define SIGRTMAX    31
+S#define NSIG        32
+S
+S#define SIG_SETMASK 0   /* set mask with sigprocmask() */
+S#define SIG_BLOCK   1   /* set of signals to block */
+S#define SIG_UNBLOCK 2   /* set of signals to, well, unblock */
+S
+Stypedef void (*_sig_func_ptr)(int);
+S
+Sstruct sigaction 
+S{
+S    _sig_func_ptr sa_handler;
+S    sigset_t sa_mask;
+S    int sa_flags;
+S};
+S
+S#define sigaddset(what,sig) (*(what) |= (1<<(sig)), 0)
+S#define sigdelset(what,sig) (*(what) &= ~(1<<(sig)), 0)
+S#define sigemptyset(what)   (*(what) = 0, 0)
+S#define sigfillset(what)    (*(what) = ~(0), 0)
+S#define sigismember(what,sig) (((*(what)) & (1<<(sig))) != 0)
+S
+Sint sigprocmask (int how, const sigset_t *set, sigset_t *oset);
+Sint sigaction(int signum, const struct sigaction *act, struct sigaction *oldact);
+N#endif
+N
+N#ifdef __cplusplus
+S}
+N#endif
+N
+N#endif
+N
+L 36 "..\rtthread\include\rtlibc.h" 2
+N#include "libc/libc_fdset.h"
+L 1 "..\rtthread\include\libc/libc_fdset.h" 1
+N/*
+N * File      : libc_errno.h
+N * This file is part of RT-Thread RTOS
+N * COPYRIGHT (C) 2017, RT-Thread Development Team
+N *
+N *  This program is free software; you can redistribute it and/or modify
+N *  it under the terms of the GNU General Public License as published by
+N *  the Free Software Foundation; either version 2 of the License, or
+N *  (at your option) any later version.
+N *
+N *  This program is distributed in the hope that it will be useful,
+N *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+N *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+N *  GNU General Public License for more details.
+N *
+N *  You should have received a copy of the GNU General Public License along
+N *  with this program; if not, write to the Free Software Foundation, Inc.,
+N *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+N *
+N * Change Logs:
+N * Date           Author       Notes
+N * 2017-10-30     Bernard      The first version
+N */
+N
+N#ifndef LIBC_FDSET_H__
+N#define LIBC_FDSET_H__
+N
+N#include <rtconfig.h>
+N
+N#if defined(RT_USING_NEWLIB) || defined(_WIN32)
+X#if 0L || 0L
+S#include <sys/types.h>
+S#if defined(HAVE_SYS_SELECT_H)
+S#include <sys/select.h>
+S#endif
+S
+N#else
+N
+N#ifdef RT_USING_DFS_NET
+S
+S#ifdef FD_SETSIZE
+S#undef FD_SETSIZE
+S#endif
+S
+S#define FD_SETSIZE      DFS_FD_MAX
+N#endif
+N
+N#  ifndef   FD_SETSIZE
+N#   define  FD_SETSIZE  32
+N#  endif
+N
+N#  define   NBBY    8       /* number of bits in a byte */
+N
+Ntypedef long    fd_mask;
+N#  define   NFDBITS (sizeof (fd_mask) * NBBY)   /* bits per mask */
+N#  ifndef   howmany
+N#   define  howmany(x,y)    (((x)+((y)-1))/(y))
+N#  endif
+N
+N/* We use a macro for fd_set so that including Sockets.h afterwards
+N   can work.  */
+Ntypedef struct _types_fd_set {
+N    fd_mask fds_bits[howmany(FD_SETSIZE, NFDBITS)];
+X    fd_mask fds_bits[(((32)+(((sizeof (fd_mask) * 8))-1))/((sizeof (fd_mask) * 8)))];
+N} _types_fd_set;
+N
+N#define fd_set _types_fd_set
+N
+N#  define   FD_SET(n, p)    ((p)->fds_bits[(n)/NFDBITS] |= (1L << ((n) % NFDBITS)))
+N#  define   FD_CLR(n, p)    ((p)->fds_bits[(n)/NFDBITS] &= ~(1L << ((n) % NFDBITS)))
+N#  define   FD_ISSET(n, p)  ((p)->fds_bits[(n)/NFDBITS] & (1L << ((n) % NFDBITS)))
+N#  define   FD_ZERO(p)      memset((void*)(p), 0, sizeof(*(p)))
+N
+N#endif
+N
+N#endif
+L 37 "..\rtthread\include\rtlibc.h" 2
+N
+N#if defined(__CC_ARM) || defined(__IAR_SYSTEMS_ICC__)
+X#if 1L || 0L
+Ntypedef signed long off_t;
+Ntypedef int mode_t;
+N#endif
+N
+N#if defined(__MINGW32__) || defined(_WIN32)
+X#if 0L || 0L
+Stypedef signed long off_t;
+Stypedef int mode_t;
+N#endif
+N
+N#endif
+N
+L 1041 "..\rtthread\include\rtdef.h" 2
+N
+N#ifdef __cplusplus
+S}
+N#endif
+N
+N#ifdef __cplusplus
+S/* RT-Thread definitions for C++ */
+Snamespace rtthread {
+S
+Senum TICK_WAIT {
+S    WAIT_NONE = 0,
+S    WAIT_FOREVER = -1,
+S};
+S
+S}
+S
+N#endif /* end of __cplusplus */
+N
+N#endif
+L 38 "..\rtthread\include\rtthread.h" 2
+N#include <rtservice.h>
+L 1 "..\rtthread\include\rtservice.h" 1
+N/*
+N * File      : rtservice.h
+N * This file is part of RT-Thread RTOS
+N * COPYRIGHT (C) 2006 - 2012, RT-Thread Development Team
+N *
+N *  This program is free software; you can redistribute it and/or modify
+N *  it under the terms of the GNU General Public License as published by
+N *  the Free Software Foundation; either version 2 of the License, or
+N *  (at your option) any later version.
+N *
+N *  This program is distributed in the hope that it will be useful,
+N *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+N *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+N *  GNU General Public License for more details.
+N *
+N *  You should have received a copy of the GNU General Public License along
+N *  with this program; if not, write to the Free Software Foundation, Inc.,
+N *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+N *
+N * Change Logs:
+N * Date           Author       Notes
+N * 2006-03-16     Bernard      the first version
+N * 2006-09-07     Bernard      move the kservice APIs to rtthread.h
+N * 2007-06-27     Bernard      fix the rt_list_remove bug
+N * 2012-03-22     Bernard      rename kservice.h to rtservice.h
+N * 2017-11-15     JasonJia     Modify rt_slist_foreach to rt_slist_for_each_entry.
+N *                             Make code cleanup.
+N */
+N
+N#ifndef __RT_SERVICE_H__
+N#define __RT_SERVICE_H__
+N
+N#ifdef __cplusplus
+Sextern "C" {
+N#endif
+N
+N/**
+N * @addtogroup KernelService
+N */
+N
+N/*@{*/
+N
+N/**
+N * rt_container_of - return the member address of ptr, if the type of ptr is the
+N * struct type.
+N */
+N#define rt_container_of(ptr, type, member) \
+N    ((type *)((char *)(ptr) - (unsigned long)(&((type *)0)->member)))
+X#define rt_container_of(ptr, type, member)     ((type *)((char *)(ptr) - (unsigned long)(&((type *)0)->member)))
+N
+N
+N/**
+N * @brief initialize a list object
+N */
+N#define RT_LIST_OBJECT_INIT(object) { &(object), &(object) }
+N
+N/**
+N * @brief initialize a list
+N *
+N * @param l list to be initialized
+N */
+Nrt_inline void rt_list_init(rt_list_t *l)
+Xstatic __inline void rt_list_init(rt_list_t *l)
+N{
+N    l->next = l->prev = l;
+N}
+N
+N/**
+N * @brief insert a node after a list
+N *
+N * @param l list to insert it
+N * @param n new node to be inserted
+N */
+Nrt_inline void rt_list_insert_after(rt_list_t *l, rt_list_t *n)
+Xstatic __inline void rt_list_insert_after(rt_list_t *l, rt_list_t *n)
+N{
+N    l->next->prev = n;
+N    n->next = l->next;
+N
+N    l->next = n;
+N    n->prev = l;
+N}
+N
+N/**
+N * @brief insert a node before a list
+N *
+N * @param n new node to be inserted
+N * @param l list to insert it
+N */
+Nrt_inline void rt_list_insert_before(rt_list_t *l, rt_list_t *n)
+Xstatic __inline void rt_list_insert_before(rt_list_t *l, rt_list_t *n)
+N{
+N    l->prev->next = n;
+N    n->prev = l->prev;
+N
+N    l->prev = n;
+N    n->next = l;
+N}
+N
+N/**
+N * @brief remove node from list.
+N * @param n the node to remove from the list.
+N */
+Nrt_inline void rt_list_remove(rt_list_t *n)
+Xstatic __inline void rt_list_remove(rt_list_t *n)
+N{
+N    n->next->prev = n->prev;
+N    n->prev->next = n->next;
+N
+N    n->next = n->prev = n;
+N}
+N
+N/**
+N * @brief tests whether a list is empty
+N * @param l the list to test.
+N */
+Nrt_inline int rt_list_isempty(const rt_list_t *l)
+Xstatic __inline int rt_list_isempty(const rt_list_t *l)
+N{
+N    return l->next == l;
+N}
+N
+N/**
+N * @brief get the list length
+N * @param l the list to get.
+N */
+Nrt_inline unsigned int rt_list_len(const rt_list_t *l)
+Xstatic __inline unsigned int rt_list_len(const rt_list_t *l)
+N{
+N    unsigned int len = 0;
+N    const rt_list_t *p = l;
+N    while (p->next != l)
+N    {
+N        p = p->next;
+N        len ++;
+N    }
+N
+N    return len;
+N}
+N
+N/**
+N * @brief get the struct for this entry
+N * @param node the entry point
+N * @param type the type of structure
+N * @param member the name of list in structure
+N */
+N#define rt_list_entry(node, type, member) \
+N    rt_container_of(node, type, member)
+X#define rt_list_entry(node, type, member)     rt_container_of(node, type, member)
+N
+N/**
+N * rt_list_for_each_entry  -   iterate over list of given type
+N * @pos:    the type * to use as a loop cursor.
+N * @head:   the head for your list.
+N * @member: the name of the list_struct within the struct.
+N */
+N#define rt_list_for_each_entry(pos, head, member) \
+N    for (pos = rt_list_entry((head)->next, typeof(*pos), member); \
+N         &pos->member != (head); \
+N         pos = rt_list_entry(pos->member.next, typeof(*pos), member))
+X#define rt_list_for_each_entry(pos, head, member)     for (pos = rt_list_entry((head)->next, typeof(*pos), member);          &pos->member != (head);          pos = rt_list_entry(pos->member.next, typeof(*pos), member))
+N
+N/**
+N * rt_list_for_each_entry_safe - iterate over list of given type safe against removal of list entry
+N * @pos:    the type * to use as a loop cursor.
+N * @n:      another type * to use as temporary storage
+N * @head:   the head for your list.
+N * @member: the name of the list_struct within the struct.
+N */
+N#define rt_list_for_each_entry_safe(pos, n, head, member) \
+N    for (pos = rt_list_entry((head)->next, typeof(*pos), member), \
+N         n = rt_list_entry(pos->member.next, typeof(*pos), member); \
+N         &pos->member != (head); \
+N         pos = n, n = rt_list_entry(n->member.next, typeof(*n), member))
+X#define rt_list_for_each_entry_safe(pos, n, head, member)     for (pos = rt_list_entry((head)->next, typeof(*pos), member),          n = rt_list_entry(pos->member.next, typeof(*pos), member);          &pos->member != (head);          pos = n, n = rt_list_entry(n->member.next, typeof(*n), member))
+N
+N/**
+N * rt_list_first_entry - get the first element from a list
+N * @ptr:    the list head to take the element from.
+N * @type:   the type of the struct this is embedded in.
+N * @member: the name of the list_struct within the struct.
+N *
+N * Note, that list is expected to be not empty.
+N */
+N#define rt_list_first_entry(ptr, type, member) \
+N    rt_list_entry((ptr)->next, type, member)
+X#define rt_list_first_entry(ptr, type, member)     rt_list_entry((ptr)->next, type, member)
+N
+N#define RT_SLIST_OBJECT_INIT(object) { RT_NULL }
+N
+N/**
+N * @brief initialize a single list
+N *
+N * @param l the single list to be initialized
+N */
+Nrt_inline void rt_slist_init(rt_slist_t *l)
+Xstatic __inline void rt_slist_init(rt_slist_t *l)
+N{
+N    l->next = RT_NULL;
+X    l->next = (0);
+N}
+N
+Nrt_inline void rt_slist_append(rt_slist_t *l, rt_slist_t *n)
+Xstatic __inline void rt_slist_append(rt_slist_t *l, rt_slist_t *n)
+N{
+N    struct rt_slist_node *node;
+N
+N    node = l;
+N    while (node->next) node = node->next;
+N
+N    /* append the node to the tail */
+N    node->next = n;
+N    n->next = RT_NULL;
+X    n->next = (0);
+N}
+N
+Nrt_inline void rt_slist_insert(rt_slist_t *l, rt_slist_t *n)
+Xstatic __inline void rt_slist_insert(rt_slist_t *l, rt_slist_t *n)
+N{
+N    n->next = l->next;
+N    l->next = n;
+N}
+N
+Nrt_inline unsigned int rt_slist_len(const rt_slist_t *l)
+Xstatic __inline unsigned int rt_slist_len(const rt_slist_t *l)
+N{
+N    unsigned int len = 0;
+N    const rt_slist_t *list = l->next;
+N    while (list != RT_NULL)
+X    while (list != (0))
+N    {
+N        list = list->next;
+N        len ++;
+N    }
+N
+N    return len;
+N}
+N
+Nrt_inline rt_slist_t *rt_slist_remove(rt_slist_t *l, rt_slist_t *n)
+Xstatic __inline rt_slist_t *rt_slist_remove(rt_slist_t *l, rt_slist_t *n)
+N{
+N    /* remove slist head */
+N    struct rt_slist_node *node = l;
+N    while (node->next && node->next != n) node = node->next;
+N
+N    /* remove node */
+N    if (node->next != (rt_slist_t *)0) node->next = node->next->next;
+N
+N    return l;
+N}
+N
+Nrt_inline int rt_slist_isempty(rt_slist_t *l)
+Xstatic __inline int rt_slist_isempty(rt_slist_t *l)
+N{
+N    return l->next == RT_NULL;
+X    return l->next == (0);
+N}
+N
+N/**
+N * @brief get the struct for this single list node
+N * @param node the entry point
+N * @param type the type of structure
+N * @param member the name of list in structure
+N */
+N#define rt_slist_entry(node, type, member) \
+N    rt_container_of(node, type, member)
+X#define rt_slist_entry(node, type, member)     rt_container_of(node, type, member)
+N
+N/**
+N * rt_slist_for_each_entry  -   iterate over single list of given type
+N * @pos:    the type * to use as a loop cursor.
+N * @head:   the head for your single list.
+N * @member: the name of the list_struct within the struct.
+N */
+N#define rt_slist_fore_each_entry(pos, head, member) \
+N    for (pos = rt_slist_entry((head)->next, typeof(*pos), member); \
+N         &pos->member != (RT_NULL); \
+N         pos = rt_slist_entry(pos->member.next, typeof(*pos), member))
+X#define rt_slist_fore_each_entry(pos, head, member)     for (pos = rt_slist_entry((head)->next, typeof(*pos), member);          &pos->member != (RT_NULL);          pos = rt_slist_entry(pos->member.next, typeof(*pos), member))
+N
+N/**
+N * rt_slist_first_entry - get the first element from a slist
+N * @ptr:    the slist head to take the element from.
+N * @type:   the type of the struct this is embedded in.
+N * @member: the name of the slist_struct within the struct.
+N *
+N * Note, that slist is expected to be not empty.
+N */
+N#define rt_slist_first_entry(ptr, type, member) \
+N    rt_slist_entry((ptr)->next, type, member)
+X#define rt_slist_first_entry(ptr, type, member)     rt_slist_entry((ptr)->next, type, member)
+N
+N/*@}*/
+N
+N#ifdef __cplusplus
+S}
+N#endif
+N
+N#endif
+L 39 "..\rtthread\include\rtthread.h" 2
+N#include <rtm.h>
+L 1 "..\rtthread\include\rtm.h" 1
+N/*
+N * File      : rtm.h
+N * This file is part of RT-Thread RTOS
+N * COPYRIGHT (C) 2006 - 2012, RT-Thread Development Team
+N *
+N *  This program is free software; you can redistribute it and/or modify
+N *  it under the terms of the GNU General Public License as published by
+N *  the Free Software Foundation; either version 2 of the License, or
+N *  (at your option) any later version.
+N *
+N *  This program is distributed in the hope that it will be useful,
+N *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+N *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+N *  GNU General Public License for more details.
+N *
+N *  You should have received a copy of the GNU General Public License along
+N *  with this program; if not, write to the Free Software Foundation, Inc.,
+N *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+N */
+N
+N#ifndef __RTM_H__
+N#define __RTM_H__
+N
+N#include <rtdef.h>
+N#include <rtthread.h>
+L 1 "..\rtthread\include\rtthread.h" 1
+N/*
+N * File      : rtthread.h
+N * This file is part of RT-Thread RTOS
+N * COPYRIGHT (C) 2006 - 2012, RT-Thread Development Team
+N *
+N *  This program is free software; you can redistribute it and/or modify
+N *  it under the terms of the GNU General Public License as published by
+N *  the Free Software Foundation; either version 2 of the License, or
+N *  (at your option) any later version.
+N *
+N *  This program is distributed in the hope that it will be useful,
+N *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+N *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+N *  GNU General Public License for more details.
+N *
+N *  You should have received a copy of the GNU General Public License along
+N *  with this program; if not, write to the Free Software Foundation, Inc.,
+N *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+N *
+N * Change Logs:
+N * Date           Author       Notes
+N * 2006-03-18     Bernard      the first version
+N * 2006-04-26     Bernard      add semaphore APIs
+N * 2006-08-10     Bernard      add version information
+N * 2007-01-28     Bernard      rename RT_OBJECT_Class_Static to RT_Object_Class_Static
+N * 2007-03-03     Bernard      clean up the definitions to rtdef.h
+N * 2010-04-11     yi.qiu       add module feature
+N * 2013-06-24     Bernard      add rt_kprintf re-define when not use RT_USING_CONSOLE.
+N * 2016-08-09     ArdaFu       add new thread and interrupt hook.
+N */
+N
+N#ifndef __RT_THREAD_H__
+S#define __RT_THREAD_H__
+S
+S#include <rtconfig.h>
+S#include <rtdebug.h>
+S#include <rtdef.h>
+S#include <rtservice.h>
+S#include <rtm.h>
+S
+S#ifdef __cplusplus
+Sextern "C" {
+S#endif
+S
+S/**
+S * @addtogroup KernelObject
+S */
+S
+S/**@{*/
+S
+S/*
+S * kernel object interface
+S */
+Svoid rt_system_object_init(void);
+Sstruct rt_object_information *
+Srt_object_get_information(enum rt_object_class_type type);
+Svoid rt_object_init(struct rt_object         *object,
+S                    enum rt_object_class_type type,
+S                    const char               *name);
+Svoid rt_object_detach(rt_object_t object);
+Srt_object_t rt_object_allocate(enum rt_object_class_type type,
+S                               const char               *name);
+Svoid rt_object_delete(rt_object_t object);
+Srt_bool_t rt_object_is_systemobject(rt_object_t object);
+Srt_object_t rt_object_find(const char *name, rt_uint8_t type);
+S
+S#ifdef RT_USING_HOOK
+Svoid rt_object_attach_sethook(void (*hook)(struct rt_object *object));
+Svoid rt_object_detach_sethook(void (*hook)(struct rt_object *object));
+Svoid rt_object_trytake_sethook(void (*hook)(struct rt_object *object));
+Svoid rt_object_take_sethook(void (*hook)(struct rt_object *object));
+Svoid rt_object_put_sethook(void (*hook)(struct rt_object *object));
+S#endif
+S
+S/**@}*/
+S
+S/**
+S * @addtogroup Clock
+S */
+S
+S/**@{*/
+S
+S/*
+S * clock & timer interface
+S */
+Svoid rt_system_tick_init(void);
+Srt_tick_t rt_tick_get(void);
+Svoid rt_tick_set(rt_tick_t tick);
+Svoid rt_tick_increase(void);
+Sint  rt_tick_from_millisecond(rt_int32_t ms);
+S
+Svoid rt_system_timer_init(void);
+Svoid rt_system_timer_thread_init(void);
+S
+Svoid rt_timer_init(rt_timer_t  timer,
+S                   const char *name,
+S                   void (*timeout)(void *parameter),
+S                   void       *parameter,
+S                   rt_tick_t   time,
+S                   rt_uint8_t  flag);
+Srt_err_t rt_timer_detach(rt_timer_t timer);
+Srt_timer_t rt_timer_create(const char *name,
+S                           void (*timeout)(void *parameter),
+S                           void       *parameter,
+S                           rt_tick_t   time,
+S                           rt_uint8_t  flag);
+Srt_err_t rt_timer_delete(rt_timer_t timer);
+Srt_err_t rt_timer_start(rt_timer_t timer);
+Srt_err_t rt_timer_stop(rt_timer_t timer);
+Srt_err_t rt_timer_control(rt_timer_t timer, int cmd, void *arg);
+S
+Srt_tick_t rt_timer_next_timeout_tick(void);
+Svoid rt_timer_check(void);
+S
+S#ifdef RT_USING_HOOK
+Svoid rt_timer_timeout_sethook(void (*hook)(struct rt_timer *timer));
+S#endif
+S
+S/**@}*/
+S
+S/**
+S * @addtogroup Thread
+S */
+S
+S/**@{*/
+S
+S/*
+S * thread interface
+S */
+Srt_err_t rt_thread_init(struct rt_thread *thread,
+S                        const char       *name,
+S                        void (*entry)(void *parameter),
+S                        void             *parameter,
+S                        void             *stack_start,
+S                        rt_uint32_t       stack_size,
+S                        rt_uint8_t        priority,
+S                        rt_uint32_t       tick);
+Srt_err_t rt_thread_detach(rt_thread_t thread);
+Srt_thread_t rt_thread_create(const char *name,
+S                             void (*entry)(void *parameter),
+S                             void       *parameter,
+S                             rt_uint32_t stack_size,
+S                             rt_uint8_t  priority,
+S                             rt_uint32_t tick);
+Srt_thread_t rt_thread_self(void);
+Srt_thread_t rt_thread_find(char *name);
+Srt_err_t rt_thread_startup(rt_thread_t thread);
+Srt_err_t rt_thread_delete(rt_thread_t thread);
+S
+Srt_err_t rt_thread_yield(void);
+Srt_err_t rt_thread_delay(rt_tick_t tick);
+Srt_err_t rt_thread_control(rt_thread_t thread, int cmd, void *arg);
+Srt_err_t rt_thread_suspend(rt_thread_t thread);
+Srt_err_t rt_thread_resume(rt_thread_t thread);
+Svoid rt_thread_timeout(void *parameter);
+S
+S#ifdef RT_USING_SIGNALS
+Svoid rt_thread_alloc_sig(rt_thread_t tid);
+Svoid rt_thread_free_sig(rt_thread_t tid);
+Sint  rt_thread_kill(rt_thread_t tid, int sig);
+S#endif
+S
+S#ifdef RT_USING_HOOK
+Svoid rt_thread_suspend_sethook(void (*hook)(rt_thread_t thread));
+Svoid rt_thread_resume_sethook (void (*hook)(rt_thread_t thread));
+Svoid rt_thread_inited_sethook (void (*hook)(rt_thread_t thread));
+S#endif
+S
+S/*
+S * idle thread interface
+S */
+Svoid rt_thread_idle_init(void);
+S#if defined(RT_USING_HOOK) || defined(RT_USING_IDLE_HOOK)
+Svoid rt_thread_idle_sethook(void (*hook)(void));
+S#endif
+Svoid rt_thread_idle_excute(void);
+Srt_thread_t rt_thread_idle_gethandler(void);
+S
+S/*
+S * schedule service
+S */
+Svoid rt_system_scheduler_init(void);
+Svoid rt_system_scheduler_start(void);
+S
+Svoid rt_schedule(void);
+Svoid rt_schedule_insert_thread(struct rt_thread *thread);
+Svoid rt_schedule_remove_thread(struct rt_thread *thread);
+S
+Svoid rt_enter_critical(void);
+Svoid rt_exit_critical(void);
+Srt_uint16_t rt_critical_level(void);
+S
+S#ifdef RT_USING_HOOK
+Svoid rt_scheduler_sethook(void (*hook)(rt_thread_t from, rt_thread_t to));
+S#endif
+S
+S/**@}*/
+S
+S/**
+S * @addtogroup Signals
+S * @{
+S */
+S#ifdef RT_USING_SIGNALS
+Svoid rt_signal_mask(int signo);
+Svoid rt_signal_unmask(int signo);
+Srt_sighandler_t rt_signal_install(int signo, rt_sighandler_t handler);
+Sint rt_signal_wait(const rt_sigset_t *set, rt_siginfo_t *si, rt_int32_t timeout);
+S
+Sint rt_system_signal_init(void);
+S#endif
+S/*@}*/
+S
+S/**
+S * @addtogroup MM
+S */
+S
+S/**@{*/
+S
+S/*
+S * memory management interface
+S */
+S#ifdef RT_USING_MEMPOOL
+S/*
+S * memory pool interface
+S */
+Srt_err_t rt_mp_init(struct rt_mempool *mp,
+S                    const char        *name,
+S                    void              *start,
+S                    rt_size_t          size,
+S                    rt_size_t          block_size);
+Srt_err_t rt_mp_detach(struct rt_mempool *mp);
+Srt_mp_t rt_mp_create(const char *name,
+S                     rt_size_t   block_count,
+S                     rt_size_t   block_size);
+Srt_err_t rt_mp_delete(rt_mp_t mp);
+S
+Svoid *rt_mp_alloc(rt_mp_t mp, rt_int32_t time);
+Svoid rt_mp_free(void *block);
+S
+S#ifdef RT_USING_HOOK
+Svoid rt_mp_alloc_sethook(void (*hook)(struct rt_mempool *mp, void *block));
+Svoid rt_mp_free_sethook(void (*hook)(struct rt_mempool *mp, void *block));
+S#endif
+S
+S#endif
+S
+S#ifdef RT_USING_HEAP
+S/*
+S * heap memory interface
+S */
+Svoid rt_system_heap_init(void *begin_addr, void *end_addr);
+S
+Svoid *rt_malloc(rt_size_t nbytes);
+Svoid rt_free(void *ptr);
+Svoid *rt_realloc(void *ptr, rt_size_t nbytes);
+Svoid *rt_calloc(rt_size_t count, rt_size_t size);
+Svoid *rt_malloc_align(rt_size_t size, rt_size_t align);
+Svoid rt_free_align(void *ptr);
+S
+Svoid rt_memory_info(rt_uint32_t *total,
+S                    rt_uint32_t *used,
+S                    rt_uint32_t *max_used);
+S
+S#ifdef RT_USING_SLAB
+Svoid *rt_page_alloc(rt_size_t npages);
+Svoid rt_page_free(void *addr, rt_size_t npages);
+S#endif
+S
+S#ifdef RT_USING_HOOK
+Svoid rt_malloc_sethook(void (*hook)(void *ptr, rt_uint32_t size));
+Svoid rt_free_sethook(void (*hook)(void *ptr));
+S#endif
+S
+S#endif
+S
+S#ifdef RT_USING_MEMHEAP
+S/**
+S * memory heap object interface
+S */
+Srt_err_t rt_memheap_init(struct rt_memheap *memheap,
+S                         const char        *name,
+S                         void              *start_addr,
+S                         rt_uint32_t        size);
+Srt_err_t rt_memheap_detach(struct rt_memheap *heap);
+Svoid *rt_memheap_alloc(struct rt_memheap *heap, rt_uint32_t size);
+Svoid *rt_memheap_realloc(struct rt_memheap *heap, void *ptr, rt_size_t newsize);
+Svoid rt_memheap_free(void *ptr);
+S#endif
+S
+S/**@}*/
+S
+S/**
+S * @addtogroup IPC
+S */
+S
+S/**@{*/
+S
+S#ifdef RT_USING_SEMAPHORE
+S/*
+S * semaphore interface
+S */
+Srt_err_t rt_sem_init(rt_sem_t    sem,
+S                     const char *name,
+S                     rt_uint32_t value,
+S                     rt_uint8_t  flag);
+Srt_err_t rt_sem_detach(rt_sem_t sem);
+Srt_sem_t rt_sem_create(const char *name, rt_uint32_t value, rt_uint8_t flag);
+Srt_err_t rt_sem_delete(rt_sem_t sem);
+S
+Srt_err_t rt_sem_take(rt_sem_t sem, rt_int32_t time);
+Srt_err_t rt_sem_trytake(rt_sem_t sem);
+Srt_err_t rt_sem_release(rt_sem_t sem);
+Srt_err_t rt_sem_control(rt_sem_t sem, int cmd, void *arg);
+S#endif
+S
+S#ifdef RT_USING_MUTEX
+S/*
+S * mutex interface
+S */
+Srt_err_t rt_mutex_init(rt_mutex_t mutex, const char *name, rt_uint8_t flag);
+Srt_err_t rt_mutex_detach(rt_mutex_t mutex);
+Srt_mutex_t rt_mutex_create(const char *name, rt_uint8_t flag);
+Srt_err_t rt_mutex_delete(rt_mutex_t mutex);
+S
+Srt_err_t rt_mutex_take(rt_mutex_t mutex, rt_int32_t time);
+Srt_err_t rt_mutex_release(rt_mutex_t mutex);
+Srt_err_t rt_mutex_control(rt_mutex_t mutex, int cmd, void *arg);
+S#endif
+S
+S#ifdef RT_USING_EVENT
+S/*
+S * event interface
+S */
+Srt_err_t rt_event_init(rt_event_t event, const char *name, rt_uint8_t flag);
+Srt_err_t rt_event_detach(rt_event_t event);
+Srt_event_t rt_event_create(const char *name, rt_uint8_t flag);
+Srt_err_t rt_event_delete(rt_event_t event);
+S
+Srt_err_t rt_event_send(rt_event_t event, rt_uint32_t set);
+Srt_err_t rt_event_recv(rt_event_t   event,
+S                       rt_uint32_t  set,
+S                       rt_uint8_t   opt,
+S                       rt_int32_t   timeout,
+S                       rt_uint32_t *recved);
+Srt_err_t rt_event_control(rt_event_t event, int cmd, void *arg);
+S#endif
+S
+S#ifdef RT_USING_MAILBOX
+S/*
+S * mailbox interface
+S */
+Srt_err_t rt_mb_init(rt_mailbox_t mb,
+S                    const char  *name,
+S                    void        *msgpool,
+S                    rt_size_t    size,
+S                    rt_uint8_t   flag);
+Srt_err_t rt_mb_detach(rt_mailbox_t mb);
+Srt_mailbox_t rt_mb_create(const char *name, rt_size_t size, rt_uint8_t flag);
+Srt_err_t rt_mb_delete(rt_mailbox_t mb);
+S
+Srt_err_t rt_mb_send(rt_mailbox_t mb, rt_uint32_t value);
+Srt_err_t rt_mb_send_wait(rt_mailbox_t mb,
+S                         rt_uint32_t  value,
+S                         rt_int32_t   timeout);
+Srt_err_t rt_mb_recv(rt_mailbox_t mb, rt_uint32_t *value, rt_int32_t timeout);
+Srt_err_t rt_mb_control(rt_mailbox_t mb, int cmd, void *arg);
+S#endif
+S
+S#ifdef RT_USING_MESSAGEQUEUE
+S/*
+S * message queue interface
+S */
+Srt_err_t rt_mq_init(rt_mq_t     mq,
+S                    const char *name,
+S                    void       *msgpool,
+S                    rt_size_t   msg_size,
+S                    rt_size_t   pool_size,
+S                    rt_uint8_t  flag);
+Srt_err_t rt_mq_detach(rt_mq_t mq);
+Srt_mq_t rt_mq_create(const char *name,
+S                     rt_size_t   msg_size,
+S                     rt_size_t   max_msgs,
+S                     rt_uint8_t  flag);
+Srt_err_t rt_mq_delete(rt_mq_t mq);
+S
+Srt_err_t rt_mq_send(rt_mq_t mq, void *buffer, rt_size_t size);
+Srt_err_t rt_mq_urgent(rt_mq_t mq, void *buffer, rt_size_t size);
+Srt_err_t rt_mq_recv(rt_mq_t    mq,
+S                    void      *buffer,
+S                    rt_size_t  size,
+S                    rt_int32_t timeout);
+Srt_err_t rt_mq_control(rt_mq_t mq, int cmd, void *arg);
+S#endif
+S
+S/**@}*/
+S
+S#ifdef RT_USING_DEVICE
+S/**
+S * @addtogroup Device
+S */
+S
+S/**@{*/
+S
+S/*
+S * device (I/O) system interface
+S */
+Srt_device_t rt_device_find(const char *name);
+S
+Srt_err_t rt_device_register(rt_device_t dev,
+S                            const char *name,
+S                            rt_uint16_t flags);
+Srt_err_t rt_device_unregister(rt_device_t dev);
+S
+Srt_device_t rt_device_create(int type, int attach_size);
+Svoid rt_device_destroy(rt_device_t device);
+S
+Srt_err_t rt_device_init_all(void);
+S
+Srt_err_t
+Srt_device_set_rx_indicate(rt_device_t dev,
+S                          rt_err_t (*rx_ind)(rt_device_t dev, rt_size_t size));
+Srt_err_t
+Srt_device_set_tx_complete(rt_device_t dev,
+S                          rt_err_t (*tx_done)(rt_device_t dev, void *buffer));
+S
+Srt_err_t  rt_device_init (rt_device_t dev);
+Srt_err_t  rt_device_open (rt_device_t dev, rt_uint16_t oflag);
+Srt_err_t  rt_device_close(rt_device_t dev);
+Srt_size_t rt_device_read (rt_device_t dev,
+S                          rt_off_t    pos,
+S                          void       *buffer,
+S                          rt_size_t   size);
+Srt_size_t rt_device_write(rt_device_t dev,
+S                          rt_off_t    pos,
+S                          const void *buffer,
+S                          rt_size_t   size);
+Srt_err_t  rt_device_control(rt_device_t dev, int cmd, void *arg);
+S
+S/**@}*/
+S#endif
+S
+S#ifdef RT_USING_MODULE
+S/**
+S * @addtogroup Module
+S */
+S
+S/**@{*/
+S
+S/*
+S * module interface
+S */
+Srt_module_t rt_module_load(const char *name, void *module_ptr);
+Srt_err_t rt_module_unload(rt_module_t module);
+S#ifdef RT_USING_DFS
+Srt_module_t rt_module_open(const char *filename);
+Srt_module_t rt_module_exec_cmd(const char *path, const char *cmd_line, int size);
+S#endif
+Svoid *rt_module_malloc(rt_size_t size);
+Svoid *rt_module_realloc(void *ptr, rt_size_t size);
+Svoid rt_module_free(rt_module_t module, void *addr);
+Srt_module_t rt_module_self(void);
+Srt_module_t rt_module_find(const char *name);
+S
+S#ifdef RT_USING_HOOK
+Svoid rt_module_load_sethook(void (*hook)(rt_module_t module));
+Svoid rt_module_unload_sethook(void (*hook)(rt_module_t module));
+S#endif
+S
+Svoid rt_module_init_object_container(struct rt_module *module);
+Srt_err_t rt_module_destroy(rt_module_t module);
+S
+S/*
+S * application module system initialization
+S */
+Sint rt_system_module_init(void);
+S
+S/**@}*/
+S#endif
+S
+S/*
+S * interrupt service
+S */
+S
+S/*
+S * rt_interrupt_enter and rt_interrupt_leave only can be called by BSP
+S */
+Svoid rt_interrupt_enter(void);
+Svoid rt_interrupt_leave(void);
+S
+S/*
+S * the number of nested interrupts.
+S */
+Srt_uint8_t rt_interrupt_get_nest(void);
+S
+S#ifdef RT_USING_HOOK
+Svoid rt_interrupt_enter_sethook(void (*hook)(void));
+Svoid rt_interrupt_leave_sethook(void (*hook)(void));
+S#endif
+S
+S#ifdef RT_USING_COMPONENTS_INIT
+Svoid rt_components_init(void);
+Svoid rt_components_board_init(void);
+S#endif
+S
+S/**
+S * @addtogroup KernelService
+S */
+S
+S/**@{*/
+S
+S/*
+S * general kernel service
+S */
+S#ifndef RT_USING_CONSOLE
+S#define rt_kprintf(...)
+S#define rt_kputs(str)
+S#else
+Svoid rt_kprintf(const char *fmt, ...);
+Svoid rt_kputs(const char *str);
+S#endif
+Srt_int32_t rt_vsprintf(char *dest, const char *format, va_list arg_ptr);
+Srt_int32_t rt_vsnprintf(char *buf, rt_size_t size, const char *fmt, va_list args);
+Srt_int32_t rt_sprintf(char *buf, const char *format, ...);
+Srt_int32_t rt_snprintf(char *buf, rt_size_t size, const char *format, ...);
+S
+S#if defined(RT_USING_DEVICE) && defined(RT_USING_CONSOLE)
+Srt_device_t rt_console_set_device(const char *name);
+Srt_device_t rt_console_get_device(void);
+S#endif
+S
+Srt_err_t rt_get_errno(void);
+Svoid rt_set_errno(rt_err_t no);
+Sint *_rt_errno(void);
+S#if !defined(RT_USING_NEWLIB) && !defined(_WIN32)
+S#ifndef errno
+S#define errno    *_rt_errno()
+S#endif
+S#endif
+S
+Sint __rt_ffs(int value);
+S
+Svoid *rt_memset(void *src, int c, rt_ubase_t n);
+Svoid *rt_memcpy(void *dest, const void *src, rt_ubase_t n);
+S
+Srt_int32_t rt_strncmp(const char *cs, const char *ct, rt_ubase_t count);
+Srt_int32_t rt_strcmp(const char *cs, const char *ct);
+Srt_size_t rt_strlen(const char *src);
+Schar *rt_strdup(const char *s);
+S
+Schar *rt_strstr(const char *str1, const char *str2);
+Srt_int32_t rt_sscanf(const char *buf, const char *fmt, ...);
+Schar *rt_strncpy(char *dest, const char *src, rt_ubase_t n);
+Svoid *rt_memmove(void *dest, const void *src, rt_ubase_t n);
+Srt_int32_t rt_memcmp(const void *cs, const void *ct, rt_ubase_t count);
+Srt_uint32_t rt_strcasecmp(const char *a, const char *b);
+S
+Svoid rt_show_version(void);
+S
+S#ifdef RT_DEBUG
+Sextern void (*rt_assert_hook)(const char *ex, const char *func, rt_size_t line);
+Svoid rt_assert_set_hook(void (*hook)(const char *ex, const char *func, rt_size_t line));
+S
+Svoid rt_assert_handler(const char *ex, const char *func, rt_size_t line);
+S#endif /* RT_DEBUG */
+S
+S#ifdef RT_USING_FINSH
+S#include <finsh_api.h>
+S#endif
+S
+S/**@}*/
+S
+S#ifdef __cplusplus
+S}
+S#endif
+S
+N#endif
+L 26 "..\rtthread\include\rtm.h" 2
+N
+N#ifdef RT_USING_MODULE
+Sstruct rt_module_symtab
+S{
+S    void       *addr;
+S    const char *name;
+S};
+S
+S#if defined(_MSC_VER)
+S#pragma section("RTMSymTab$f",read)
+S#define RTM_EXPORT(symbol)                                            \
+S__declspec(allocate("RTMSymTab$f"))const char __rtmsym_##symbol##_name[] = "__vs_rtm_"#symbol;
+X#define RTM_EXPORT(symbol)                                            __declspec(allocate("RTMSymTab$f"))const char __rtmsym_##symbol##_name[] = "__vs_rtm_"#symbol;
+S#pragma comment(linker, "/merge:RTMSymTab=mytext")
+S
+S#elif defined(__MINGW32__)
+S#define RTM_EXPORT(symbol)
+S
+S#else
+S#define RTM_EXPORT(symbol)                                            \
+Sconst char __rtmsym_##symbol##_name[] SECTION(".rodata.name") = #symbol;     \
+Sconst struct rt_module_symtab __rtmsym_##symbol SECTION("RTMSymTab")= \
+S{                                                                     \
+S    (void *)&symbol,                                                  \
+S    __rtmsym_##symbol##_name                                          \
+S};
+X#define RTM_EXPORT(symbol)                                            const char __rtmsym_##symbol##_name[] SECTION(".rodata.name") = #symbol;     const struct rt_module_symtab __rtmsym_##symbol SECTION("RTMSymTab")= {                                                                         (void *)&symbol,                                                      __rtmsym_##symbol##_name                                          };
+S#endif
+S
+N#else
+N#define RTM_EXPORT(symbol)
+N#endif
+N
+N#endif
+L 40 "..\rtthread\include\rtthread.h" 2
+N
+N#ifdef __cplusplus
+Sextern "C" {
+N#endif
+N
+N/**
+N * @addtogroup KernelObject
+N */
+N
+N/**@{*/
+N
+N/*
+N * kernel object interface
+N */
+Nvoid rt_system_object_init(void);
+Nstruct rt_object_information *
+Nrt_object_get_information(enum rt_object_class_type type);
+Nvoid rt_object_init(struct rt_object         *object,
+N                    enum rt_object_class_type type,
+N                    const char               *name);
+Nvoid rt_object_detach(rt_object_t object);
+Nrt_object_t rt_object_allocate(enum rt_object_class_type type,
+N                               const char               *name);
+Nvoid rt_object_delete(rt_object_t object);
+Nrt_bool_t rt_object_is_systemobject(rt_object_t object);
+Nrt_object_t rt_object_find(const char *name, rt_uint8_t type);
+N
+N#ifdef RT_USING_HOOK
+Svoid rt_object_attach_sethook(void (*hook)(struct rt_object *object));
+Svoid rt_object_detach_sethook(void (*hook)(struct rt_object *object));
+Svoid rt_object_trytake_sethook(void (*hook)(struct rt_object *object));
+Svoid rt_object_take_sethook(void (*hook)(struct rt_object *object));
+Svoid rt_object_put_sethook(void (*hook)(struct rt_object *object));
+N#endif
+N
+N/**@}*/
+N
+N/**
+N * @addtogroup Clock
+N */
+N
+N/**@{*/
+N
+N/*
+N * clock & timer interface
+N */
+Nvoid rt_system_tick_init(void);
+Nrt_tick_t rt_tick_get(void);
+Nvoid rt_tick_set(rt_tick_t tick);
+Nvoid rt_tick_increase(void);
+Nint  rt_tick_from_millisecond(rt_int32_t ms);
+N
+Nvoid rt_system_timer_init(void);
+Nvoid rt_system_timer_thread_init(void);
+N
+Nvoid rt_timer_init(rt_timer_t  timer,
+N                   const char *name,
+N                   void (*timeout)(void *parameter),
+N                   void       *parameter,
+N                   rt_tick_t   time,
+N                   rt_uint8_t  flag);
+Nrt_err_t rt_timer_detach(rt_timer_t timer);
+Nrt_timer_t rt_timer_create(const char *name,
+N                           void (*timeout)(void *parameter),
+N                           void       *parameter,
+N                           rt_tick_t   time,
+N                           rt_uint8_t  flag);
+Nrt_err_t rt_timer_delete(rt_timer_t timer);
+Nrt_err_t rt_timer_start(rt_timer_t timer);
+Nrt_err_t rt_timer_stop(rt_timer_t timer);
+Nrt_err_t rt_timer_control(rt_timer_t timer, int cmd, void *arg);
+N
+Nrt_tick_t rt_timer_next_timeout_tick(void);
+Nvoid rt_timer_check(void);
+N
+N#ifdef RT_USING_HOOK
+Svoid rt_timer_timeout_sethook(void (*hook)(struct rt_timer *timer));
+N#endif
+N
+N/**@}*/
+N
+N/**
+N * @addtogroup Thread
+N */
+N
+N/**@{*/
+N
+N/*
+N * thread interface
+N */
+Nrt_err_t rt_thread_init(struct rt_thread *thread,
+N                        const char       *name,
+N                        void (*entry)(void *parameter),
+N                        void             *parameter,
+N                        void             *stack_start,
+N                        rt_uint32_t       stack_size,
+N                        rt_uint8_t        priority,
+N                        rt_uint32_t       tick);
+Nrt_err_t rt_thread_detach(rt_thread_t thread);
+Nrt_thread_t rt_thread_create(const char *name,
+N                             void (*entry)(void *parameter),
+N                             void       *parameter,
+N                             rt_uint32_t stack_size,
+N                             rt_uint8_t  priority,
+N                             rt_uint32_t tick);
+Nrt_thread_t rt_thread_self(void);
+Nrt_thread_t rt_thread_find(char *name);
+Nrt_err_t rt_thread_startup(rt_thread_t thread);
+Nrt_err_t rt_thread_delete(rt_thread_t thread);
+N
+Nrt_err_t rt_thread_yield(void);
+Nrt_err_t rt_thread_delay(rt_tick_t tick);
+Nrt_err_t rt_thread_control(rt_thread_t thread, int cmd, void *arg);
+Nrt_err_t rt_thread_suspend(rt_thread_t thread);
+Nrt_err_t rt_thread_resume(rt_thread_t thread);
+Nvoid rt_thread_timeout(void *parameter);
+N
+N#ifdef RT_USING_SIGNALS
+Svoid rt_thread_alloc_sig(rt_thread_t tid);
+Svoid rt_thread_free_sig(rt_thread_t tid);
+Sint  rt_thread_kill(rt_thread_t tid, int sig);
+N#endif
+N
+N#ifdef RT_USING_HOOK
+Svoid rt_thread_suspend_sethook(void (*hook)(rt_thread_t thread));
+Svoid rt_thread_resume_sethook (void (*hook)(rt_thread_t thread));
+Svoid rt_thread_inited_sethook (void (*hook)(rt_thread_t thread));
+N#endif
+N
+N/*
+N * idle thread interface
+N */
+Nvoid rt_thread_idle_init(void);
+N#if defined(RT_USING_HOOK) || defined(RT_USING_IDLE_HOOK)
+X#if 0L || 0L
+Svoid rt_thread_idle_sethook(void (*hook)(void));
+N#endif
+Nvoid rt_thread_idle_excute(void);
+Nrt_thread_t rt_thread_idle_gethandler(void);
+N
+N/*
+N * schedule service
+N */
+Nvoid rt_system_scheduler_init(void);
+Nvoid rt_system_scheduler_start(void);
+N
+Nvoid rt_schedule(void);
+Nvoid rt_schedule_insert_thread(struct rt_thread *thread);
+Nvoid rt_schedule_remove_thread(struct rt_thread *thread);
+N
+Nvoid rt_enter_critical(void);
+Nvoid rt_exit_critical(void);
+Nrt_uint16_t rt_critical_level(void);
+N
+N#ifdef RT_USING_HOOK
+Svoid rt_scheduler_sethook(void (*hook)(rt_thread_t from, rt_thread_t to));
+N#endif
+N
+N/**@}*/
+N
+N/**
+N * @addtogroup Signals
+N * @{
+N */
+N#ifdef RT_USING_SIGNALS
+Svoid rt_signal_mask(int signo);
+Svoid rt_signal_unmask(int signo);
+Srt_sighandler_t rt_signal_install(int signo, rt_sighandler_t handler);
+Sint rt_signal_wait(const rt_sigset_t *set, rt_siginfo_t *si, rt_int32_t timeout);
+S
+Sint rt_system_signal_init(void);
+N#endif
+N/*@}*/
+N
+N/**
+N * @addtogroup MM
+N */
+N
+N/**@{*/
+N
+N/*
+N * memory management interface
+N */
+N#ifdef RT_USING_MEMPOOL
+S/*
+S * memory pool interface
+S */
+Srt_err_t rt_mp_init(struct rt_mempool *mp,
+S                    const char        *name,
+S                    void              *start,
+S                    rt_size_t          size,
+S                    rt_size_t          block_size);
+Srt_err_t rt_mp_detach(struct rt_mempool *mp);
+Srt_mp_t rt_mp_create(const char *name,
+S                     rt_size_t   block_count,
+S                     rt_size_t   block_size);
+Srt_err_t rt_mp_delete(rt_mp_t mp);
+S
+Svoid *rt_mp_alloc(rt_mp_t mp, rt_int32_t time);
+Svoid rt_mp_free(void *block);
+S
+S#ifdef RT_USING_HOOK
+Svoid rt_mp_alloc_sethook(void (*hook)(struct rt_mempool *mp, void *block));
+Svoid rt_mp_free_sethook(void (*hook)(struct rt_mempool *mp, void *block));
+S#endif
+S
+N#endif
+N
+N#ifdef RT_USING_HEAP
+N/*
+N * heap memory interface
+N */
+Nvoid rt_system_heap_init(void *begin_addr, void *end_addr);
+N
+Nvoid *rt_malloc(rt_size_t nbytes);
+Nvoid rt_free(void *ptr);
+Nvoid *rt_realloc(void *ptr, rt_size_t nbytes);
+Nvoid *rt_calloc(rt_size_t count, rt_size_t size);
+Nvoid *rt_malloc_align(rt_size_t size, rt_size_t align);
+Nvoid rt_free_align(void *ptr);
+N
+Nvoid rt_memory_info(rt_uint32_t *total,
+N                    rt_uint32_t *used,
+N                    rt_uint32_t *max_used);
+N
+N#ifdef RT_USING_SLAB
+Svoid *rt_page_alloc(rt_size_t npages);
+Svoid rt_page_free(void *addr, rt_size_t npages);
+N#endif
+N
+N#ifdef RT_USING_HOOK
+Svoid rt_malloc_sethook(void (*hook)(void *ptr, rt_uint32_t size));
+Svoid rt_free_sethook(void (*hook)(void *ptr));
+N#endif
+N
+N#endif
+N
+N#ifdef RT_USING_MEMHEAP
+S/**
+S * memory heap object interface
+S */
+Srt_err_t rt_memheap_init(struct rt_memheap *memheap,
+S                         const char        *name,
+S                         void              *start_addr,
+S                         rt_uint32_t        size);
+Srt_err_t rt_memheap_detach(struct rt_memheap *heap);
+Svoid *rt_memheap_alloc(struct rt_memheap *heap, rt_uint32_t size);
+Svoid *rt_memheap_realloc(struct rt_memheap *heap, void *ptr, rt_size_t newsize);
+Svoid rt_memheap_free(void *ptr);
+N#endif
+N
+N/**@}*/
+N
+N/**
+N * @addtogroup IPC
+N */
+N
+N/**@{*/
+N
+N#ifdef RT_USING_SEMAPHORE
+N/*
+N * semaphore interface
+N */
+Nrt_err_t rt_sem_init(rt_sem_t    sem,
+N                     const char *name,
+N                     rt_uint32_t value,
+N                     rt_uint8_t  flag);
+Nrt_err_t rt_sem_detach(rt_sem_t sem);
+Nrt_sem_t rt_sem_create(const char *name, rt_uint32_t value, rt_uint8_t flag);
+Nrt_err_t rt_sem_delete(rt_sem_t sem);
+N
+Nrt_err_t rt_sem_take(rt_sem_t sem, rt_int32_t time);
+Nrt_err_t rt_sem_trytake(rt_sem_t sem);
+Nrt_err_t rt_sem_release(rt_sem_t sem);
+Nrt_err_t rt_sem_control(rt_sem_t sem, int cmd, void *arg);
+N#endif
+N
+N#ifdef RT_USING_MUTEX
+S/*
+S * mutex interface
+S */
+Srt_err_t rt_mutex_init(rt_mutex_t mutex, const char *name, rt_uint8_t flag);
+Srt_err_t rt_mutex_detach(rt_mutex_t mutex);
+Srt_mutex_t rt_mutex_create(const char *name, rt_uint8_t flag);
+Srt_err_t rt_mutex_delete(rt_mutex_t mutex);
+S
+Srt_err_t rt_mutex_take(rt_mutex_t mutex, rt_int32_t time);
+Srt_err_t rt_mutex_release(rt_mutex_t mutex);
+Srt_err_t rt_mutex_control(rt_mutex_t mutex, int cmd, void *arg);
+N#endif
+N
+N#ifdef RT_USING_EVENT
+S/*
+S * event interface
+S */
+Srt_err_t rt_event_init(rt_event_t event, const char *name, rt_uint8_t flag);
+Srt_err_t rt_event_detach(rt_event_t event);
+Srt_event_t rt_event_create(const char *name, rt_uint8_t flag);
+Srt_err_t rt_event_delete(rt_event_t event);
+S
+Srt_err_t rt_event_send(rt_event_t event, rt_uint32_t set);
+Srt_err_t rt_event_recv(rt_event_t   event,
+S                       rt_uint32_t  set,
+S                       rt_uint8_t   opt,
+S                       rt_int32_t   timeout,
+S                       rt_uint32_t *recved);
+Srt_err_t rt_event_control(rt_event_t event, int cmd, void *arg);
+N#endif
+N
+N#ifdef RT_USING_MAILBOX
+N/*
+N * mailbox interface
+N */
+Nrt_err_t rt_mb_init(rt_mailbox_t mb,
+N                    const char  *name,
+N                    void        *msgpool,
+N                    rt_size_t    size,
+N                    rt_uint8_t   flag);
+Nrt_err_t rt_mb_detach(rt_mailbox_t mb);
+Nrt_mailbox_t rt_mb_create(const char *name, rt_size_t size, rt_uint8_t flag);
+Nrt_err_t rt_mb_delete(rt_mailbox_t mb);
+N
+Nrt_err_t rt_mb_send(rt_mailbox_t mb, rt_uint32_t value);
+Nrt_err_t rt_mb_send_wait(rt_mailbox_t mb,
+N                         rt_uint32_t  value,
+N                         rt_int32_t   timeout);
+Nrt_err_t rt_mb_recv(rt_mailbox_t mb, rt_uint32_t *value, rt_int32_t timeout);
+Nrt_err_t rt_mb_control(rt_mailbox_t mb, int cmd, void *arg);
+N#endif
+N
+N#ifdef RT_USING_MESSAGEQUEUE
+S/*
+S * message queue interface
+S */
+Srt_err_t rt_mq_init(rt_mq_t     mq,
+S                    const char *name,
+S                    void       *msgpool,
+S                    rt_size_t   msg_size,
+S                    rt_size_t   pool_size,
+S                    rt_uint8_t  flag);
+Srt_err_t rt_mq_detach(rt_mq_t mq);
+Srt_mq_t rt_mq_create(const char *name,
+S                     rt_size_t   msg_size,
+S                     rt_size_t   max_msgs,
+S                     rt_uint8_t  flag);
+Srt_err_t rt_mq_delete(rt_mq_t mq);
+S
+Srt_err_t rt_mq_send(rt_mq_t mq, void *buffer, rt_size_t size);
+Srt_err_t rt_mq_urgent(rt_mq_t mq, void *buffer, rt_size_t size);
+Srt_err_t rt_mq_recv(rt_mq_t    mq,
+S                    void      *buffer,
+S                    rt_size_t  size,
+S                    rt_int32_t timeout);
+Srt_err_t rt_mq_control(rt_mq_t mq, int cmd, void *arg);
+N#endif
+N
+N/**@}*/
+N
+N#ifdef RT_USING_DEVICE
+N/**
+N * @addtogroup Device
+N */
+N
+N/**@{*/
+N
+N/*
+N * device (I/O) system interface
+N */
+Nrt_device_t rt_device_find(const char *name);
+N
+Nrt_err_t rt_device_register(rt_device_t dev,
+N                            const char *name,
+N                            rt_uint16_t flags);
+Nrt_err_t rt_device_unregister(rt_device_t dev);
+N
+Nrt_device_t rt_device_create(int type, int attach_size);
+Nvoid rt_device_destroy(rt_device_t device);
+N
+Nrt_err_t rt_device_init_all(void);
+N
+Nrt_err_t
+Nrt_device_set_rx_indicate(rt_device_t dev,
+N                          rt_err_t (*rx_ind)(rt_device_t dev, rt_size_t size));
+Nrt_err_t
+Nrt_device_set_tx_complete(rt_device_t dev,
+N                          rt_err_t (*tx_done)(rt_device_t dev, void *buffer));
+N
+Nrt_err_t  rt_device_init (rt_device_t dev);
+Nrt_err_t  rt_device_open (rt_device_t dev, rt_uint16_t oflag);
+Nrt_err_t  rt_device_close(rt_device_t dev);
+Nrt_size_t rt_device_read (rt_device_t dev,
+N                          rt_off_t    pos,
+N                          void       *buffer,
+N                          rt_size_t   size);
+Nrt_size_t rt_device_write(rt_device_t dev,
+N                          rt_off_t    pos,
+N                          const void *buffer,
+N                          rt_size_t   size);
+Nrt_err_t  rt_device_control(rt_device_t dev, int cmd, void *arg);
+N
+N/**@}*/
+N#endif
+N
+N#ifdef RT_USING_MODULE
+S/**
+S * @addtogroup Module
+S */
+S
+S/**@{*/
+S
+S/*
+S * module interface
+S */
+Srt_module_t rt_module_load(const char *name, void *module_ptr);
+Srt_err_t rt_module_unload(rt_module_t module);
+S#ifdef RT_USING_DFS
+Srt_module_t rt_module_open(const char *filename);
+Srt_module_t rt_module_exec_cmd(const char *path, const char *cmd_line, int size);
+S#endif
+Svoid *rt_module_malloc(rt_size_t size);
+Svoid *rt_module_realloc(void *ptr, rt_size_t size);
+Svoid rt_module_free(rt_module_t module, void *addr);
+Srt_module_t rt_module_self(void);
+Srt_module_t rt_module_find(const char *name);
+S
+S#ifdef RT_USING_HOOK
+Svoid rt_module_load_sethook(void (*hook)(rt_module_t module));
+Svoid rt_module_unload_sethook(void (*hook)(rt_module_t module));
+S#endif
+S
+Svoid rt_module_init_object_container(struct rt_module *module);
+Srt_err_t rt_module_destroy(rt_module_t module);
+S
+S/*
+S * application module system initialization
+S */
+Sint rt_system_module_init(void);
+S
+S/**@}*/
+N#endif
+N
+N/*
+N * interrupt service
+N */
+N
+N/*
+N * rt_interrupt_enter and rt_interrupt_leave only can be called by BSP
+N */
+Nvoid rt_interrupt_enter(void);
+Nvoid rt_interrupt_leave(void);
+N
+N/*
+N * the number of nested interrupts.
+N */
+Nrt_uint8_t rt_interrupt_get_nest(void);
+N
+N#ifdef RT_USING_HOOK
+Svoid rt_interrupt_enter_sethook(void (*hook)(void));
+Svoid rt_interrupt_leave_sethook(void (*hook)(void));
+N#endif
+N
+N#ifdef RT_USING_COMPONENTS_INIT
+Nvoid rt_components_init(void);
+Nvoid rt_components_board_init(void);
+N#endif
+N
+N/**
+N * @addtogroup KernelService
+N */
+N
+N/**@{*/
+N
+N/*
+N * general kernel service
+N */
+N#ifndef RT_USING_CONSOLE
+S#define rt_kprintf(...)
+S#define rt_kputs(str)
+N#else
+Nvoid rt_kprintf(const char *fmt, ...);
+Nvoid rt_kputs(const char *str);
+N#endif
+Nrt_int32_t rt_vsprintf(char *dest, const char *format, va_list arg_ptr);
+Nrt_int32_t rt_vsnprintf(char *buf, rt_size_t size, const char *fmt, va_list args);
+Nrt_int32_t rt_sprintf(char *buf, const char *format, ...);
+Nrt_int32_t rt_snprintf(char *buf, rt_size_t size, const char *format, ...);
+N
+N#if defined(RT_USING_DEVICE) && defined(RT_USING_CONSOLE)
+X#if 1L && 1L
+Nrt_device_t rt_console_set_device(const char *name);
+Nrt_device_t rt_console_get_device(void);
+N#endif
+N
+Nrt_err_t rt_get_errno(void);
+Nvoid rt_set_errno(rt_err_t no);
+Nint *_rt_errno(void);
+N#if !defined(RT_USING_NEWLIB) && !defined(_WIN32)
+X#if !0L && !0L
+N#ifndef errno
+N#define errno    *_rt_errno()
+N#endif
+N#endif
+N
+Nint __rt_ffs(int value);
+N
+Nvoid *rt_memset(void *src, int c, rt_ubase_t n);
+Nvoid *rt_memcpy(void *dest, const void *src, rt_ubase_t n);
+N
+Nrt_int32_t rt_strncmp(const char *cs, const char *ct, rt_ubase_t count);
+Nrt_int32_t rt_strcmp(const char *cs, const char *ct);
+Nrt_size_t rt_strlen(const char *src);
+Nchar *rt_strdup(const char *s);
+N
+Nchar *rt_strstr(const char *str1, const char *str2);
+Nrt_int32_t rt_sscanf(const char *buf, const char *fmt, ...);
+Nchar *rt_strncpy(char *dest, const char *src, rt_ubase_t n);
+Nvoid *rt_memmove(void *dest, const void *src, rt_ubase_t n);
+Nrt_int32_t rt_memcmp(const void *cs, const void *ct, rt_ubase_t count);
+Nrt_uint32_t rt_strcasecmp(const char *a, const char *b);
+N
+Nvoid rt_show_version(void);
+N
+N#ifdef RT_DEBUG
+Sextern void (*rt_assert_hook)(const char *ex, const char *func, rt_size_t line);
+Svoid rt_assert_set_hook(void (*hook)(const char *ex, const char *func, rt_size_t line));
+S
+Svoid rt_assert_handler(const char *ex, const char *func, rt_size_t line);
+N#endif /* RT_DEBUG */
+N
+N#ifdef RT_USING_FINSH
+S#include <finsh_api.h>
+N#endif
+N
+N/**@}*/
+N
+N#ifdef __cplusplus
+S}
+N#endif
+N
+N#endif
+L 33 "..\rtthread\include\rthw.h" 2
+N
+N#ifdef __cplusplus
+Sextern "C" {
+N#endif
+N
+N/*
+N * Some macros define
+N */
+N#ifndef HWREG32
+N#define HWREG32(x)          (*((volatile rt_uint32_t *)(x)))
+N#endif
+N#ifndef HWREG16
+N#define HWREG16(x)          (*((volatile rt_uint16_t *)(x)))
+N#endif
+N#ifndef HWREG8
+N#define HWREG8(x)           (*((volatile rt_uint8_t *)(x)))
+N#endif
+N
+N#ifndef RT_CPU_CACHE_LINE_SZ
+N#define RT_CPU_CACHE_LINE_SZ	32
+N#endif
+N
+Nenum RT_HW_CACHE_OPS
+N{
+N    RT_HW_CACHE_FLUSH      = 0x01,
+N    RT_HW_CACHE_INVALIDATE = 0x02,
+N};
+N
+N/*
+N * CPU interfaces
+N */
+Nvoid rt_hw_cpu_icache_enable(void);
+Nvoid rt_hw_cpu_icache_disable(void);
+Nrt_base_t rt_hw_cpu_icache_status(void);
+Nvoid rt_hw_cpu_icache_ops(int ops, void* addr, int size);
+N
+Nvoid rt_hw_cpu_dcache_enable(void);
+Nvoid rt_hw_cpu_dcache_disable(void);
+Nrt_base_t rt_hw_cpu_dcache_status(void);
+Nvoid rt_hw_cpu_dcache_ops(int ops, void* addr, int size);
+N
+Nvoid rt_hw_cpu_reset(void);
+Nvoid rt_hw_cpu_shutdown(void);
+N
+Nrt_uint8_t *rt_hw_stack_init(void       *entry,
+N                             void       *parameter,
+N                             rt_uint8_t *stack_addr,
+N                             void       *exit);
+N
+N/*
+N * Interrupt handler definition
+N */
+Ntypedef void (*rt_isr_handler_t)(int vector, void *param);
+N
+Nstruct rt_irq_desc
+N{
+N    rt_isr_handler_t handler;
+N    void            *param;
+N
+N#ifdef RT_USING_INTERRUPT_INFO
+S    char             name[RT_NAME_MAX];
+S    rt_uint32_t      counter;
+N#endif
+N};
+N
+N/*
+N * Interrupt interfaces
+N */
+Nvoid rt_hw_interrupt_init(void);
+Nvoid rt_hw_interrupt_mask(int vector);
+Nvoid rt_hw_interrupt_umask(int vector);
+Nrt_isr_handler_t rt_hw_interrupt_install(int              vector,
+N                                         rt_isr_handler_t handler,
+N                                         void            *param,
+N                                         char            *name);
+N
+Nrt_base_t rt_hw_interrupt_disable(void);
+Nvoid rt_hw_interrupt_enable(rt_base_t level);
+N
+N/*
+N * Context interfaces
+N */
+Nvoid rt_hw_context_switch(rt_uint32_t from, rt_uint32_t to);
+Nvoid rt_hw_context_switch_to(rt_uint32_t to);
+Nvoid rt_hw_context_switch_interrupt(rt_uint32_t from, rt_uint32_t to);
+N
+Nvoid rt_hw_console_output(const char *str);
+N
+Nvoid rt_hw_backtrace(rt_uint32_t *fp, rt_uint32_t thread_entry);
+Nvoid rt_hw_show_memory(rt_uint32_t addr, rt_uint32_t size);
+N
+N/*
+N * Exception interfaces
+N */
+Nvoid rt_hw_exception_install(rt_err_t (*exception_handle)(void *context));
+N
+N/*
+N * delay interfaces
+N */
+Nvoid rt_hw_us_delay(rt_uint32_t us);
+N
+N#ifdef __cplusplus
+S}
+N#endif
+N
+N#endif
+L 32 "..\rtthread\src\idle.c" 2
+N#include <rtthread.h>
+N
+N#if defined (RT_USING_HOOK)
+X#if 0L
+S#ifndef RT_USING_IDLE_HOOK
+S#define RT_USING_IDLE_HOOK
+S#endif
+N#endif
+N
+N#ifndef IDLE_THREAD_STACK_SIZE
+N#if defined (RT_USING_IDLE_HOOK) || defined(RT_USING_HEAP)
+X#if 0L || 1L
+N#define IDLE_THREAD_STACK_SIZE  256
+N#else
+S#define IDLE_THREAD_STACK_SIZE  128
+N#endif
+N#endif
+N
+Nstatic struct rt_thread idle;
+NALIGN(RT_ALIGN_SIZE)
+X__attribute__((aligned(4)))
+Nstatic rt_uint8_t rt_thread_stack[IDLE_THREAD_STACK_SIZE];
+Xstatic rt_uint8_t rt_thread_stack[256];
+N
+Nextern rt_list_t rt_thread_defunct;
+N
+N#ifdef RT_USING_IDLE_HOOK
+Sstatic void (*rt_thread_idle_hook)();
+S
+S/**
+S * @ingroup Hook
+S * This function sets a hook function to idle thread loop. When the system performs
+S * idle loop, this hook function should be invoked.
+S *
+S * @param hook the specified hook function
+S *
+S * @note the hook function must be simple and never be blocked or suspend.
+S */
+Svoid rt_thread_idle_sethook(void (*hook)(void))
+S{
+S    rt_thread_idle_hook = hook;
+S}
+N#endif
+N
+N/* Return whether there is defunctional thread to be deleted. */
+Nrt_inline int _has_defunct_thread(void)
+Xstatic __inline int _has_defunct_thread(void)
+N{
+N    /* The rt_list_isempty has prototype of "int rt_list_isempty(const rt_list_t *l)".
+N     * So the compiler has a good reason that the rt_thread_defunct list does
+N     * not change within rt_thread_idle_excute thus optimize the "while" loop
+N     * into a "if".
+N     *
+N     * So add the volatile qualifier here. */
+N    const volatile rt_list_t *l = (const volatile rt_list_t *)&rt_thread_defunct;
+N
+N    return l->next != l;
+N}
+N
+N/**
+N * @ingroup Thread
+N *
+N * This function will perform system background job when system idle.
+N */
+Nvoid rt_thread_idle_excute(void)
+N{
+N    /* Loop until there is no dead thread. So one call to rt_thread_idle_excute
+N     * will do all the cleanups. */
+N    while (_has_defunct_thread())
+N    {
+N        rt_base_t lock;
+N        rt_thread_t thread;
+N#ifdef RT_USING_MODULE
+S        rt_module_t module = RT_NULL;
+N#endif
+N        RT_DEBUG_NOT_IN_INTERRUPT;
+X        ;
+N
+N        /* disable interrupt */
+N        lock = rt_hw_interrupt_disable();
+N
+N        /* re-check whether list is empty */
+N        if (_has_defunct_thread())
+N        {
+N            /* get defunct thread */
+N            thread = rt_list_entry(rt_thread_defunct.next,
+N                                   struct rt_thread,
+N                                   tlist);
+X            thread = ((struct rt_thread *)((char *)(rt_thread_defunct . next) - (unsigned long)(&((struct rt_thread *)0)->tlist)));
+N#ifdef RT_USING_MODULE
+S            /* get thread's parent module */
+S            module = (rt_module_t)thread->module_id;
+S
+S            /* if the thread is module's main thread */
+S            if (module != RT_NULL && module->module_thread == thread)
+S            {
+S                /* detach module's main thread */
+S                module->module_thread = RT_NULL;
+S            }
+N#endif
+N            /* remove defunct thread */
+N            rt_list_remove(&(thread->tlist));
+N
+N            /* lock scheduler to prevent scheduling in cleanup function. */
+N            rt_enter_critical();
+N
+N            /* invoke thread cleanup */
+N            if (thread->cleanup != RT_NULL)
+X            if (thread->cleanup != (0))
+N                thread->cleanup(thread);
+N
+N#ifdef RT_USING_SIGNALS
+S            rt_thread_free_sig(thread);
+N#endif
+N
+N            /* if it's a system object, not delete it */
+N            if (rt_object_is_systemobject((rt_object_t)thread) == RT_TRUE)
+X            if (rt_object_is_systemobject((rt_object_t)thread) == 1)
+N            {
+N                /* unlock scheduler */
+N                rt_exit_critical();
+N
+N                /* enable interrupt */
+N                rt_hw_interrupt_enable(lock);
+N
+N                return;
+N            }
+N
+N            /* unlock scheduler */
+N            rt_exit_critical();
+N        }
+N        else
+N        {
+N            /* enable interrupt */
+N            rt_hw_interrupt_enable(lock);
+N
+N            /* may the defunct thread list is removed by others, just return */
+N            return;
+N        }
+N
+N        /* enable interrupt */
+N        rt_hw_interrupt_enable(lock);
+N
+N#ifdef RT_USING_HEAP
+N#if defined(RT_USING_MODULE) && defined(RT_USING_SLAB)
+X#if 0L && 0L
+S        /* the thread belongs to an application module */
+S        if (thread->flags & RT_OBJECT_FLAG_MODULE)
+S            rt_module_free((rt_module_t)thread->module_id, thread->stack_addr);
+S        else
+N#endif
+N            /* release thread's stack */
+N            RT_KERNEL_FREE(thread->stack_addr);
+X            rt_free(thread->stack_addr);
+N        /* delete thread object */
+N        rt_object_delete((rt_object_t)thread);
+N#endif
+N
+N#ifdef RT_USING_MODULE
+S        if (module != RT_NULL)
+S        {
+S            extern rt_err_t rt_module_destroy(rt_module_t module);
+S
+S            /* if sub thread list and main thread are all empty */
+S            if ((module->module_thread == RT_NULL) &&
+S                rt_list_isempty(&module->module_object[RT_Object_Class_Thread].object_list))
+S            {
+S                module->nref --;
+S            }
+S
+S            /* destroy module */
+S            if (module->nref == 0)
+S                rt_module_destroy(module);
+S        }
+N#endif
+N    }
+N}
+N
+Nstatic void rt_thread_idle_entry(void *parameter)
+N{
+N    while (1)
+N    {
+N#ifdef RT_USING_IDLE_HOOK
+S        if (rt_thread_idle_hook != RT_NULL)
+S        {
+S            rt_thread_idle_hook();
+S        }
+N#endif
+N
+N        rt_thread_idle_excute();
+N    }
+N}
+N
+N/**
+N * @ingroup SystemInit
+N *
+N * This function will initialize idle thread, then start it.
+N *
+N * @note this function must be invoked when system init.
+N */
+Nvoid rt_thread_idle_init(void)
+N{
+N    /* initialize thread */
+N    rt_thread_init(&idle,
+N                   "tidle",
+N                   rt_thread_idle_entry,
+N                   RT_NULL,
+X                   (0),
+N                   &rt_thread_stack[0],
+N                   sizeof(rt_thread_stack),
+N                   RT_THREAD_PRIORITY_MAX - 1,
+X                   32 - 1,
+N                   32);
+N
+N    /* startup */
+N    rt_thread_startup(&idle);
+N}
+N
+N/**
+N * @ingroup Thread
+N *
+N * This function will get the handler of the idle thread.
+N *
+N */
+Nrt_thread_t rt_thread_idle_gethandler(void)
+N{
+N    return (rt_thread_t)(&idle);
+N}

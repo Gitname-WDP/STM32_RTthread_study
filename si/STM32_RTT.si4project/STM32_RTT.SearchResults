@@ -1,0 +1,13 @@
+---- rt_memset Matches (11 in 9 files) ----
+
+rt_device_create in device.c (E:\study\ST32_F103ZE_RtThread_development\rtthread\src) :         rt_memset(device, 0x0, sizeof(struct rt_device));
+kservice.c (E:\study\ST32_F103ZE_RtThread_development\rtthread\src) line 136 : void *rt_memset(void *s, int c, rt_ubase_t count)
+RTM_EXPORT in kservice.c (E:\study\ST32_F103ZE_RtThread_development\rtthread\src) : RTM_EXPORT(rt_memset);
+kservice.c (E:\study\ST32_F103ZE_RtThread_development\rtthread\src) line 1349 : void *memset(void *s, int c, size_t n) __attribute__((weak, alias("rt_memset")));
+rt_calloc in mem.c (E:\study\ST32_F103ZE_RtThread_development\rtthread\src) :         rt_memset(p, 0, count * size);
+rt_calloc in memheap.c (E:\study\ST32_F103ZE_RtThread_development\rtthread\src) :         rt_memset(ptr, 0, total_size);
+rtthread.h (E:\study\ST32_F103ZE_RtThread_development\rtthread\include) line 542 : void *rt_memset(void *src, int c, rt_ubase_t n);
+rt_system_scheduler_init in scheduler.c (E:\study\ST32_F103ZE_RtThread_development\rtthread\src) :     rt_memset(rt_thread_ready_table, 0, sizeof(rt_thread_ready_table));
+rt_serial_open in serial.c (E:\study\ST32_F103ZE_RtThread_development\rtthread\components\drivers\serial) :             rt_memset(rx_fifo->buffer, 0, serial->config.bufsz);
+finsh_wait_auth in shell.c (E:\study\ST32_F103ZE_RtThread_development\rtthread\components\finsh) :             rt_memset(password, '\0', FINSH_PASSWORD_MAX);
+_rt_thread_init in thread.c (E:\study\ST32_F103ZE_RtThread_development\rtthread\src) :     rt_memset(thread->stack_addr, '#', thread->stack_size);
